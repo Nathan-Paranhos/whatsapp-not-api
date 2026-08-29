@@ -1,0 +1,26 @@
+{
+  "name": "whatsapp-not-api",
+  "version": "1.0.0",
+  "private": true,
+  "license": "MIT",
+  "description": "Painel local para enviar mensagens de WhatsApp a uma lista própria, com opt-in por contato e conferência antes de cada lote.",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node.exe --env-file-if-exists=.env src/server.js",
+    "dev": "node.exe --env-file-if-exists=.env --watch src/server.js",
+    "import": "node.exe --env-file-if-exists=.env scripts/import-contacts.js",
+    "import-secoes": "node.exe scripts/import-leads.js",
+    "import-consent": "node.exe --env-file-if-exists=.env scripts/import-consent.js",
+    "screenshots": "node.exe scripts/screenshots.js",
+    "setup:windows": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/setup.ps1",
+    "test": "node.exe --test"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "dependencies": {
+    "express": "5.2.1",
+    "qrcode": "1.5.4",
+    "whatsapp-web.js": "1.34.7"
+  }
+}

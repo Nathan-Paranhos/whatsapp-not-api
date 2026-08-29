@@ -1,0 +1,19 @@
+node_modules/
+.wwebjs_auth/
+.wwebjs_cache/
+data/*.db
+data/*.db-*
+data/*.sqlite*
+
+# A lista de contatos e os comprovantes de opt-in são dados de quem usa:
+# ficam na máquina, nunca no repositório.
+data/*.json
+data/*.csv
+data/*.txt
+opt-ins*.csv
+contatos*.csv
+contatos*.json
+*.log
+.env
+coverage/
+

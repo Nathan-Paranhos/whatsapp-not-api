@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#173f31">
+    <meta name="description" content="Painel local para enviar mensagens de WhatsApp a uma lista própria, com opt-in por contato">
+    <title>Whatsapp Not Api</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="whatsapp-not-api — início">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 34 34" role="img">
+            <path class="brand-orbit" d="M25.6 6.9a13 13 0 1 1-16.4 1.4"/>
+            <path class="brand-bubble" d="M17 8.6a8.4 8.4 0 0 0-7.3 12.6l-1.2 4.1 4.3-1.1A8.4 8.4 0 1 0 17 8.6Z"/>
+            <circle class="brand-dot" cx="13.4" cy="17" r="1.35"/>
+            <circle class="brand-dot" cx="17" cy="17" r="1.35"/>
+            <circle class="brand-dot" cx="20.6" cy="17" r="1.35"/>
+            <circle class="brand-spark" cx="26.4" cy="6.1" r="2.7"/>
+          </svg>
+        </span>
+        <span>
+          <strong>Whatsapp Not Api</strong>
+          <small>contatos</small>
+        </span>
+      </a>
+
+      <div class="topbar-actions">
+        <div class="connection-pill" id="connection-pill" aria-live="polite">
+          <span class="status-dot"></span>
+          <span id="connection-pill-label">Carregando…</span>
+        </div>
+        <button class="button button-primary button-compact" id="connection-action" type="button" disabled>
+          Conectar WhatsApp
+        </button>
+      </div>
+    </header>
+
+    <main class="page-shell">
+      <section class="welcome-row">
+        <div>
+          <p class="eyebrow">Central de relacionamento</p>
+          <h1>Converse com cuidado.<br><span>Acompanhe cada contato.</span></h1>
+          <p class="welcome-copy">Sua lista, sua mensagem e o andamento da fila em um só lugar — com bloqueio de duplicatas e pedidos de saída.</p>
+        </div>
+        <div class="date-card" aria-label="Dados armazenados localmente">
+          <span class="lock-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M7 10V8a5 5 0 0 1 10 0v2m-11 0h12v10H6V10Z"/></svg>
+          </span>
+          <div>
+            <strong>Somente neste computador</strong>
+            <span>QR, sessão e histórico não saem daqui</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="policy-banner" aria-label="Uso responsável">
+        <span class="policy-icon" aria-hidden="true">i</span>
+        <div>
+          <strong>Envie somente para quem autorizou o contato. Uso por sua conta e risco.</strong>
+          <p>Número público não equivale a opt-in. Este é um cliente não oficial: o uso pode restringir ou banir sua conta, e a responsabilidade legal pelo envio é de quem envia. O painel exige confirmação individual e bloqueia automaticamente quem responder ou pedir para sair.</p>
+        </div>
+        <button class="text-button" id="policy-details" type="button" disabled>Ver limites</button>
+      </section>
+
+      <section class="stats-grid" aria-label="Resumo da lista">
+        <article class="stat-card">
+          <span class="stat-icon stat-icon-neutral" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2m7-10a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm13 10v-2a4 4 0 0 0-3-3.87m0-7.26a4 4 0 0 1 0 7.75"/></svg>
+          </span>
+          <div><span>Total importado</span><strong id="stat-total">—</strong><small id="stat-total-note">carregando</small></div>
+        </article>
+        <article class="stat-card">
+          <span class="stat-icon stat-icon-green" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="m20 6-11 11-5-5"/></svg>
+          </span>
+          <div><span>Elegíveis agora</span><strong id="stat-eligible">—</strong><small>opt-in e dados aprovados</small></div>
+        </article>
+        <article class="stat-card">
+          <span class="stat-icon stat-icon-amber" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M12 9v4m0 4h.01M10.3 3.7 2.5 18a2 2 0 0 0 1.8 3h15.4a2 2 0 0 0 1.8-3L13.7 3.7a2 2 0 0 0-3.4 0Z"/></svg>
+          </span>
+          <div><span>Precisam de revisão</span><strong id="stat-review">—</strong><small>fixos, tags ou DDD</small></div>
+        </article>
+        <article class="stat-card">
+          <span class="stat-icon stat-icon-blue" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4v8Z"/></svg>
+          </span>
+          <div><span>Enviados</span><strong id="stat-sent">—</strong><small id="stat-replies">0 respostas</small></div>
+        </article>
+      </section>
+
+      <div class="dashboard-grid">
+        <div class="primary-column">
+          <section class="panel queue-panel" id="queue-panel" aria-live="polite">
+            <div class="panel-header">
+              <div>
+                <p class="section-kicker">Fila de envio</p>
+                <h2 id="queue-title">Nenhum lote em andamento</h2>
+              </div>
+              <span class="queue-status-badge" id="queue-status-badge">Parada</span>
+            </div>
+            <div class="queue-empty" id="queue-empty">
+              <img class="queue-empty-mascot" src="/img/mascote.png" alt="" width="420" height="429" loading="lazy" decoding="async">
+              <div>
+                <strong>Pronta quando você estiver</strong>
+                <p>Confirme o opt-in dos contatos e inicie um lote de até 20 mensagens. Você confere a lista de destinatários antes de qualquer envio.</p>
+              </div>
+            </div>
+            <div class="queue-live hidden" id="queue-live">
+              <div class="progress-meta">
+                <span id="queue-progress-label">0 de 0 processados</span>
+                <span id="queue-next-time">—</span>
+              </div>
+              <div class="progress-track" id="queue-progress-track" role="progressbar" aria-label="Progresso do lote" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0"><span id="queue-progress-bar"></span></div>
+              <div class="queue-contact-row">
+                <div>
+                  <small>Contato atual</small>
+                  <strong id="queue-current">—</strong>
+                </div>
+                <div class="queue-counts" id="queue-counts"></div>
+              </div>
+              <p class="inline-alert hidden" id="queue-alert"></p>
+            </div>
+            <div class="queue-actions">
+              <button class="button button-primary" id="start-queue" type="button" disabled>Iniciar novo lote</button>
+              <button class="button button-secondary hidden" id="pause-queue" type="button">Pausar</button>
+              <button class="button button-primary hidden" id="resume-queue" type="button">Retomar</button>
+              <button class="button button-ghost hidden" id="cancel-queue" type="button">Cancelar lote</button>
+            </div>
+          </section>
+
+          <section class="panel contacts-panel">
+            <div class="panel-header contacts-heading">
+              <div>
+                <p class="section-kicker">Sua lista</p>
+                <h2>Empresas</h2>
+              </div>
+              <a class="button button-secondary button-compact" href="/api/export.csv" download>Exportar CSV</a>
+            </div>
+
+            <div class="filters-row">
+              <label class="search-box">
+                <span class="sr-only">Buscar empresa ou telefone</span>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+                <input id="contact-search" type="search" placeholder="Buscar empresa ou telefone…" autocomplete="off">
+              </label>
+              <label class="select-wrap">
+                <span class="sr-only">Filtrar por status</span>
+                <select id="contact-filter">
+                  <option value="all">Todos os status</option>
+                  <option value="eligible">Elegíveis</option>
+                  <option value="consent">Sem opt-in registrado</option>
+                  <option value="review">Precisam de revisão</option>
+                  <option value="landline">Telefones fixos</option>
+                  <option value="sent">Enviados</option>
+                  <option value="replied">Responderam</option>
+                  <option value="invalid">Sem telefone</option>
+                  <option value="suppressed">Não contatar</option>
+                  <option value="uncertain">Resultado incerto</option>
+                  <option value="failed">Falharam</option>
+                </select>
+              </label>
+              <label class="select-wrap city-select">
+                <span class="sr-only">Filtrar por cidade</span>
+                <select id="city-filter"><option value="">Todas as cidades</option></select>
+              </label>
+            </div>
+
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only">Empresas importadas e situação de contato no WhatsApp</caption>
+                <thead>
+                  <tr>
+                    <th>Empresa</th>
+                    <th>Contato</th>
+                    <th>Situação</th>
+                    <th class="actions-column">Ações</th>
+                  </tr>
+                </thead>
+                <tbody id="contacts-body">
+                  <tr><td colspan="4"><div class="table-loading">Carregando contatos…</div></td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="pagination-row">
+              <span id="pagination-label">—</span>
+              <div>
+                <button class="icon-button" id="previous-page" type="button" aria-label="Página anterior">←</button>
+                <span id="page-label">1 / 1</span>
+                <button class="icon-button" id="next-page" type="button" aria-label="Próxima página">→</button>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <aside class="secondary-column">
+          <section class="panel connection-card" id="connection-card">
+            <div class="panel-header compact-header">
+              <div>
+                <p class="section-kicker">Conexão</p>
+                <h2>WhatsApp</h2>
+              </div>
+              <span class="status-dot large" id="connection-dot"></span>
+            </div>
+            <div class="connection-state" id="connection-state">
+              <div class="phone-illustration" aria-hidden="true">
+                <svg viewBox="0 0 64 64"><rect x="16" y="5" width="32" height="54" rx="7"/><path d="M27 11h10M29 52h6"/><circle cx="32" cy="31" r="9"/><path d="M27.5 31.5 31 35l6-7"/></svg>
+              </div>
+              <strong id="connection-title">Iniciando…</strong>
+              <p id="connection-message">Aguarde enquanto preparamos a conexão.</p>
+              <span class="account-label hidden" id="account-label"></span>
+            </div>
+            <button class="button button-secondary full-width" id="connection-secondary" type="button" disabled>Reconectar</button>
+          </section>
+
+          <section class="panel composer-card">
+            <div class="panel-header compact-header">
+              <div>
+                <p class="section-kicker">Mensagem fixa</p>
+                <h2>Modelo</h2>
+              </div>
+              <span class="variable-chip">{empresa}</span>
+            </div>
+            <label class="field-label" for="message-template">Texto enviado</label>
+            <textarea id="message-template" rows="14" spellcheck="true"></textarea>
+            <div class="composer-meta">
+              <span>Use <code>{empresa}</code> no texto</span>
+              <span id="template-count">0 / 4096</span>
+            </div>
+            <details class="preview-disclosure">
+              <summary>Ver prévia personalizada</summary>
+              <div class="message-preview" id="message-preview"></div>
+            </details>
+            <button class="button button-primary full-width" id="save-template" type="button" disabled>Salvar mensagem</button>
+          </section>
+
+          <section class="panel activity-card">
+            <div class="panel-header compact-header">
+              <div>
+                <p class="section-kicker">Atualizações</p>
+                <h2>Atividade recente</h2>
+              </div>
+            </div>
+            <ol class="activity-list" id="activity-list">
+              <li class="activity-empty">Nenhuma atividade ainda.</li>
+            </ol>
+          </section>
+        </aside>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <a class="signature" href="https://nathan-paranhos.com.br/" target="_blank" rel="noopener noreferrer">
+        <img src="/img/assinatura-web.png" alt="Nathan Paranhos, Software Engineer" width="480" height="163" loading="lazy" decoding="async">
+        <span class="signature-hint">nathan-paranhos.com.br</span>
+      </a>
+      <p class="site-footer-meta">whatsapp-not-api · open source sob licença MIT · sem garantia, uso por sua conta e risco</p>
+    </footer>
+
+    <dialog class="modal qr-modal" id="qr-modal" aria-labelledby="qr-modal-title" aria-describedby="qr-modal-copy">
+      <form method="dialog" class="modal-shell">
+        <button class="modal-close" value="cancel" aria-label="Fechar">×</button>
+        <div class="modal-heading centered">
+          <img class="modal-mascot" src="/img/mascote-sm.png" alt="" width="128" height="131" loading="lazy" decoding="async">
+          <h2 id="qr-modal-title">Conectar ao WhatsApp</h2>
+          <p id="qr-modal-copy">No celular, abra WhatsApp → Aparelhos conectados → Conectar aparelho.</p>
+        </div>
+        <div class="qr-frame" id="qr-frame">
+          <div class="qr-loading"><span class="spinner"></span><p>Gerando QR Code…</p></div>
+        </div>
+        <p class="qr-security">O QR Code expira rapidamente e nunca é salvo no histórico.</p>
+      </form>
+    </dialog>
+
+    <dialog class="modal" id="action-modal" aria-labelledby="action-modal-title" aria-describedby="action-modal-copy">
+      <form method="dialog" class="modal-shell" id="action-form">
+        <button class="modal-close" id="action-close" type="button" aria-label="Fechar">×</button>
+        <div class="modal-heading">
+          <span class="modal-icon" id="action-modal-icon" aria-hidden="true">!</span>
+          <div>
+            <h2 id="action-modal-title">Confirmar ação</h2>
+            <p id="action-modal-copy"></p>
+          </div>
+        </div>
+        <div id="action-modal-content"></div>
+        <div class="modal-actions">
+          <button class="button button-secondary" value="cancel" type="button" id="action-cancel">Cancelar</button>
+          <button class="button button-primary" value="confirm" type="submit" id="action-confirm">Confirmar</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
+  </body>
+</html>
