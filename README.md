@@ -187,11 +187,11 @@ O formato é detectado sozinho. Nada é gravado sem `--aplicar`.
 O nome da empresa vai na frente do número. Traço, vírgula, ponto e vírgula, dois pontos, barra vertical ou só espaço — todos funcionam como separador:
 
 ```text
-Padaria Aurora — (71) 99111-1111
-2. Café Bom Dia - 71 99222-2222
-Mercado Central, 71993333333
-Loja 2 | 71994444444
-Doceria Lua: +55 71 99555-5555
+Padaria Aurora — (71) 99111-xxxx
+2. Café Bom Dia - 71 99222-xxxx
+Mercado Central, 71993333xxx
+Loja 2 | 719944xxxx
+Doceria Lua: +55 71 99555-xxxx
 ```
 
 ### Só os números
@@ -199,9 +199,9 @@ Doceria Lua: +55 71 99555-5555
 Também funciona, sem nome nenhum:
 
 ```text
-71991111111
-+5571992222222
-(71) 99333-3333
+71991111xxxx
++5571992222xxx
+(71) 99333-xxxx
 ```
 
 Quando a lista tem contato sem nome, o comando **para e avisa**:
@@ -225,8 +225,8 @@ Cabeçalho em qualquer ordem, separado por `,`, `;` ou TAB. Só `telefone` é ob
 
 ```csv
 empresa,telefone,cidade
-Padaria Aurora,(71) 99111-1111,Salvador
-,71992222222,
+Padaria Aurora,(71) 99111-xxxx,Salvador
+,7199222xxxx,
 ```
 
 Nomes de coluna aceitos, com ou sem acento e em qualquer caixa:
@@ -243,14 +243,14 @@ Lista de objetos, lista de números, ou objeto com a chave `contacts`:
 
 ```json
 [
-  { "empresa": "Padaria Aurora", "telefone": "(71) 99111-1111", "cidade": "Salvador" },
-  { "nome": "Café Bom Dia", "numero": "71992222222" },
-  { "phone": "71993333333" }
+  { "empresa": "Padaria Aurora", "telefone": "(71) 99111-xxxx", "cidade": "Salvador" },
+  { "nome": "Café Bom Dia", "numero": "7199222xxxx" },
+  { "phone": "7199333xxxx" }
 ]
 ```
 
 ```json
-["71991111111", "+5571992222222"]
+["7199111xxxx1", "+557199222xxx2"]
 ```
 
 ### O que a importação faz com cada linha
@@ -297,8 +297,8 @@ npm run import-consent -- "C:\caminho\opt-ins.csv" --aplicar  # grava
 
 ```csv
 telefone,data,origem,observacao
-(71) 99111-1111,28/08/2026,formulário do site,pediu demonstração
-71992222222,15/07/2026,cadastro de cliente,
+(71) 99111-xxxx,28/08/2026,formulário do site,pediu demonstração
+7199222xxxx,15/07/2026,cadastro de cliente,
 ```
 
 `telefone`, `data` e `origem` são obrigatórios em toda linha. A origem e a data ficam gravadas junto do opt-in — é isso que torna o registro verificável depois. Linha sem esses dados é descartada com aviso; telefone fora da base é apenas relatado; contato já enviado, suprimido ou que respondeu não recebe opt-in retroativo.
