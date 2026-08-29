@@ -12,6 +12,7 @@
     "import-secoes": "node.exe scripts/import-leads.js",
     "import-consent": "node.exe --env-file-if-exists=.env scripts/import-consent.js",
     "screenshots": "node.exe scripts/screenshots.js",
+    "check:mermaid": "node.exe scripts/check-mermaid.js README.md",
     "setup:windows": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/setup.ps1",
     "test": "node.exe --test"
   },

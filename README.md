@@ -112,61 +112,61 @@ Na primeira abertura o painel mostra um QR Code. Leia em **WhatsApp → Aparelho
 
 ```mermaid
 flowchart TD
-    A[Sua lista<br/>JSON, CSV ou texto] --> B[npm run import]
-    B --> C{Todo contato<br/>tem nome?}
-    C -- não --> D[Avisa quantos estão só com o número<br/>e pede --sem-nome para seguir]
+    A["Sua lista<br/>JSON, CSV ou texto"] --> B["npm run import"]
+    B --> C{"Todo contato tem nome?"}
+    C -->|"não"| D["Avisa quantos estão só com o número<br/>e pede --sem-nome para seguir"]
+    C -->|"sim"| E[("Banco local<br/>todos sem opt-in")]
     D --> E
-    C -- sim --> E[(Banco local<br/>todos sem opt-in)]
 
-    E --> F[Escrever a mensagem no painel]
-    F --> G{Usa a variável<br/>&#123;empresa&#125;?}
-    G -- sim --> H[Todo destinatário precisa ter nome]
-    G -- não --> I[Contato só com número também recebe]
-    H --> J
-    I --> J[Registrar opt-in contato a contato]
+    E --> F["Escrever a mensagem no painel"]
+    F --> G{"Usa a variável {empresa}?"}
+    G -->|"sim"| H["Todo destinatário precisa ter nome"]
+    G -->|"não"| I["Contato só com número também recebe"]
+    H --> J["Registrar opt-in contato a contato"]
+    I --> J
 
-    J --> K{Contato precisa<br/>de revisão?}
-    K -- fixo, DDD divergente --> L[Revisar dados manualmente]
-    K -- celular normal --> M
-    L --> M[Contato elegível]
+    J --> K{"Contato precisa de revisão?"}
+    K -->|"fixo ou DDD divergente"| L["Revisar dados manualmente"]
+    K -->|"celular normal"| M["Contato elegível"]
+    L --> M
 
-    M --> N[Iniciar lote]
-    N --> O[Prévia: a lista de quem vai receber]
-    O --> P[Remover quem não deve receber]
-    P --> Q{Confirmar autorização}
-    Q -- sim --> R[Fila inicia]
-    Q -- não --> O
+    M --> N["Iniciar lote"]
+    N --> O["Prévia com a lista de quem vai receber"]
+    O --> P["Remover quem não deve receber"]
+    P --> Q{"Confirmar autorização"}
+    Q -->|"sim"| R["Fila inicia"]
+    Q -->|"não"| O
 
-    R --> S[Envio, uma mensagem por vez]
-    S --> T{Deu certo?}
-    T -- enviado --> U[Espera sorteada<br/>e vai para o próximo]
-    T -- sem WhatsApp --> V[Marca inválido]
-    T -- erro de rede --> W[Marca incerto<br/>nunca reenvia sozinho]
-    U --> X{Ainda há contato,<br/>horário e limite?}
+    R --> S["Envio, uma mensagem por vez"]
+    S --> T{"Deu certo?"}
+    T -->|"enviado"| U["Espera sorteada<br/>e vai para o próximo"]
+    T -->|"sem WhatsApp"| V["Marca inválido"]
+    T -->|"erro de rede"| W["Marca incerto<br/>nunca reenvia sozinho"]
+    U --> X{"Ainda há contato, horário e limite?"}
     V --> X
     W --> X
-    X -- sim --> S
-    X -- não --> Y[Lote encerrado ou pausado]
+    X -->|"sim"| S
+    X -->|"não"| Y["Lote encerrado ou pausado"]
 
-    Z[Alguém responde] --> AA[Fila pausa]
-    AB[Alguém manda SAIR] --> AC[Bloqueio permanente]
+    Z["Alguém responde"] --> AA["Fila pausa"]
+    AB["Alguém manda SAIR"] --> AC["Bloqueio permanente"]
 ```
 
 ### Onde a fila para sozinha
 
 ```mermaid
 flowchart LR
-    A[Antes de cada mensagem] --> B{WhatsApp conectado?}
-    B -- não --> P[Pausa]
-    B -- sim --> C{Dentro do<br/>horário comercial?}
-    C -- não --> P
-    C -- sim --> D{Abaixo do<br/>limite diário?}
-    D -- não --> P
-    D -- sim --> E{Abaixo do<br/>limite por hora?}
-    E -- não --> P
-    E -- sim --> F{3 problemas<br/>seguidos?}
-    F -- sim --> P
-    F -- não --> G[Envia]
+    A["Antes de cada mensagem"] --> B{"WhatsApp conectado?"}
+    B -->|"não"| P["Pausa"]
+    B -->|"sim"| C{"Dentro do horário comercial?"}
+    C -->|"não"| P
+    C -->|"sim"| D{"Abaixo do limite diário?"}
+    D -->|"não"| P
+    D -->|"sim"| E{"Abaixo do limite por hora?"}
+    E -->|"não"| P
+    E -->|"sim"| F{"Três problemas seguidos?"}
+    F -->|"sim"| P
+    F -->|"não"| G["Envia"]
 ```
 
 Nenhuma dessas pausas se desfaz sozinha. Você retoma no painel, de propósito.
@@ -562,6 +562,7 @@ Se o processo morrer no meio de um envio, na próxima abertura o banco marca com
 | `npm run import-secoes -- <lista.txt>` | Importador da lista antiga, em seções por cidade |
 | `npm run setup:windows` | Instala dependências e o navegador interno |
 | `npm run screenshots` | Regera os prints do README (usa a lista fictícia) |
+| `npm run check:mermaid` | Renderiza os diagramas do README e falha se algum quebrar |
 | `npm test` | Roda os testes |
 
 ---
@@ -606,6 +607,14 @@ npm test
 Cobrem normalização de telefone, os três formatos de importação, `{empresa}` opcional, opt-in, revisão, supressão, filtros, proteção da API local, a conferência de destinatários antes do lote, o sorteio do intervalo e a leitura do arquivo de opt-ins.
 
 Os testes usam `test/fixtures/contacts.json`, uma lista fictícia. Nenhum teste depende da sua lista real.
+
+Os diagramas do README são verificados à parte, renderizando cada um de verdade:
+
+```powershell
+npm run check:mermaid
+```
+
+O verificador decodifica entidades HTML antes de passar o texto ao mermaid, que é o que o GitHub faz — sem isso, um `&#123;` passaria no teste e quebraria só na página publicada.
 
 ---
 
