@@ -348,7 +348,7 @@ textarea { width: 100%; resize: vertical; border: 1px solid var(--line); border-
 .modal-summary span { color: var(--ink-faint); font-size: 9px; text-transform: uppercase; }
 .modal-summary strong { margin-top: 4px; color: var(--green-950); font-size: 16px; }
 .recipient-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 20px; color: var(--ink-faint); font-size: 10px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; }
-.recipient-list { max-height: 310px; margin: 8px 0 0; padding: 0; overflow-y: auto; list-style: none; border: 1px solid var(--line); border-radius: 12px; }
+.recipient-list { max-height: 46vh; margin: 8px 0 0; padding: 0; overflow-y: auto; list-style: none; border: 1px solid var(--line); border-radius: 12px; }
 .recipient-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 13px; border-bottom: 1px solid var(--line); }
 .recipient-list li:last-child { border-bottom: 0; }
 .recipient-list li.removed { background: var(--surface-soft); }

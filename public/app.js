@@ -32,7 +32,7 @@ function cacheElements() {
     'connection-message', 'account-label', 'connection-secondary', 'stat-total', 'stat-total-note',
     'stat-eligible', 'stat-review', 'stat-sent', 'stat-replies', 'queue-title', 'queue-status-badge',
     'queue-empty', 'queue-live', 'queue-progress-label', 'queue-next-time', 'queue-progress-track', 'queue-progress-bar',
-    'queue-current', 'queue-counts', 'queue-alert', 'start-queue', 'pause-queue', 'resume-queue',
+    'queue-current', 'queue-counts', 'queue-alert', 'queue-empty-copy', 'start-queue', 'pause-queue', 'resume-queue',
     'cancel-queue', 'contact-search', 'contact-filter', 'city-filter', 'contacts-body',
     'pagination-label', 'page-label', 'previous-page', 'next-page', 'message-template', 'template-count',
     'message-preview', 'save-template', 'activity-list', 'qr-modal', 'qr-frame', 'action-modal',
@@ -238,6 +238,11 @@ function renderQueue(queue) {
     ].join('');
     elements.queueAlert.textContent = queue.pauseReason || '';
     elements.queueAlert.classList.toggle('hidden', !queue.pauseReason);
+  }
+
+  const maxBatch = state.bootstrap?.policy.maxBatchSize;
+  if (elements.queueEmptyCopy && maxBatch) {
+    elements.queueEmptyCopy.textContent = `Confirme o opt-in dos contatos e inicie um lote de até ${formatNumber(maxBatch)} mensagens. Você confere a lista de destinatários antes de qualquer envio.`;
   }
 
   const ready = state.bootstrap?.whatsapp.status === 'ready';

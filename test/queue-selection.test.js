@@ -99,9 +99,13 @@ test('a prévia lista exatamente quem entraria no lote, sem enfileirar nada', as
 
 test('a prévia respeita o teto de lote mesmo se o painel pedir mais', async (t) => {
   const { baseUrl, database } = await createTestServer(t);
-  await authorize(database, 25);
+  const authorized = await authorize(database, 25);
   const preview = await (await fetch(`${baseUrl}/api/queue/preview?limit=999`)).json();
-  assert.equal(preview.contacts.length, baseConfig.maxBatchSize);
+
+  // Nunca passa do teto, e nunca inventa contato além dos elegíveis.
+  assert.ok(preview.contacts.length <= baseConfig.maxBatchSize);
+  assert.equal(preview.contacts.length, Math.min(baseConfig.maxBatchSize, authorized.length));
+  assert.equal(preview.limit, Math.min(baseConfig.maxBatchSize, 999));
 });
 
 test('o lote enfileira apenas os destinatários que sobraram na lista', async (t) => {
@@ -151,10 +155,12 @@ test('a confirmação de autorização continua obrigatória com lista escolhida
 });
 
 test('a seleção não passa do limite de lote', async (t) => {
-  const { baseUrl, database } = await createTestServer(t);
-  const authorized = await authorize(database, baseConfig.maxBatchSize + 5);
+  const { baseUrl } = await createTestServer(t);
+  // O tamanho é validado antes da elegibilidade, então ids sintéticos bastam e
+  // o teste não fica preso ao tamanho do fixture.
+  const excessivo = Array.from({ length: baseConfig.maxBatchSize + 1 }, (_, index) => index + 1);
   const response = await post(baseUrl, '/api/queue/start', {
-    contactIds: authorized,
+    contactIds: excessivo,
     intervalSeconds: 180,
     authorizationAcknowledged: true,
   });

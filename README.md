@@ -311,7 +311,7 @@ telefone,data,origem,observacao
 
 **Iniciar novo lote** abre duas etapas.
 
-**Etapa 1** — quantidade (até 20) e intervalo entre mensagens.
+**Etapa 1** — quantidade (até 200) e intervalo entre mensagens.
 
 **Etapa 2** — a prévia:
 
@@ -370,12 +370,24 @@ Tudo em [src/config.js](./src/config.js):
 | `minIntervalSeconds` | 90 | Piso absoluto entre duas mensagens |
 | `defaultIntervalSeconds` | 180 | Intervalo sugerido no painel |
 | `intervalJitterRatio` | 0.35 | Sorteia cada espera em ±35% do intervalo |
-| `maxBatchSize` | 20 | Contatos por lote |
+| `maxBatchSize` | 200 | Contatos por lote |
 | `hourlyLimit` | 40 | Teto por hora |
 | `dailyLimit` | 500 | Teto por dia |
 | `businessHourStart` / `End` | 9 / 18 | Janela de envio, no relógio do computador |
 
-**Os tetos não se somam.** O que realmente limita o volume é o intervalo mínimo: a 90 segundos por mensagem cabem no máximo 40 envios por hora e, na janela de 09h às 18h, cerca de **360 por dia**. O `dailyLimit` de 500 é uma trava final, não uma meta alcançável — para chegar perto dele seria preciso baixar `minIntervalSeconds`, e é aí que o risco de bloqueio da conta cresce de verdade.
+**Os tetos não se somam, e o tamanho do lote não acelera nada.** Um lote de 200 não envia mais rápido que um de 20: ele só evita que você precise iniciar um lote novo a cada meia hora. O que realmente limita o volume é o intervalo mínimo — a 90 segundos por mensagem cabem no máximo 40 envios por hora e, na janela de 09h às 18h, cerca de **360 por dia**.
+
+Na prática, com os padrões atuais:
+
+| | |
+| --- | --- |
+| Um lote de 200 leva | **5 horas ou mais** (200 ÷ 40 por hora) |
+| Cabem por dia na janela 09h–18h | ~360 mensagens |
+| `dailyLimit: 500` | trava final, não é alcançável sem baixar o intervalo |
+
+Um lote de 200 iniciado às 14h não termina no mesmo dia: ele pausa às 18h com "fim do horário comercial" e espera você retomar. Isso é esperado — a fila nunca retoma sozinha.
+
+Para chegar perto de 500/dia seria preciso baixar `minIntervalSeconds`, e é aí que o risco de bloqueio da conta cresce de verdade.
 
 A espera entre mensagens é sorteada dentro da faixa, então o intervalo de 3 minutos vira algo entre ~2min e ~4min a cada envio. O piso de 90 s nunca é ultrapassado para baixo.
 

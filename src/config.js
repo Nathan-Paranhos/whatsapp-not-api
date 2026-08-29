@@ -31,7 +31,7 @@ module.exports = {
   // Cada espera sai sorteada dentro de ±35% do intervalo escolhido, sem nunca
   // descer abaixo de minIntervalSeconds.
   intervalJitterRatio: 0.35,
-  maxBatchSize: 20,
+  maxBatchSize: 200,
   // Tetos de segurança. Eles não se somam: o que realmente limita o dia é o
   // intervalo mínimo. A 90 s por mensagem cabem no máximo 40 envios por hora e,
   // na janela 09h–18h, cerca de 360 por dia — dailyLimit é a trava final, não
