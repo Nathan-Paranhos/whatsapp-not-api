@@ -78,7 +78,7 @@ test('API entrega o painel, filtra contatos e mantém a fila bloqueada sem Whats
 
   const queueResponse = await fetch(`${baseUrl}/api/queue/start`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-Local-Client': 'test' },
     body: JSON.stringify({ limit: 1, intervalSeconds: 180, authorizationAcknowledged: true }),
   });
   assert.equal(queueResponse.status, 409);
@@ -89,7 +89,7 @@ test('API exige confirmação de opt-in e bloqueia origem externa', async (t) =>
   const { baseUrl } = await createTestServer(t);
   const missingConfirmation = await fetch(`${baseUrl}/api/contacts/2/consent`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-Local-Client': 'test' },
     body: JSON.stringify({ confirmed: false }),
   });
   assert.equal(missingConfirmation.status, 400);
@@ -103,7 +103,7 @@ test('API exige confirmação de opt-in e bloqueia origem externa', async (t) =>
 
   const confirmed = await fetch(`${baseUrl}/api/contacts/2/consent`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-Local-Client': 'test' },
     body: JSON.stringify({ confirmed: true, note: 'Solicitou demonstração' }),
   });
   assert.equal(confirmed.status, 200);
@@ -115,7 +115,7 @@ test('API aceita mensagem sem {empresa} e recusa variável desconhecida', async 
   const { baseUrl } = await createTestServer(t);
   const put = (template) => fetch(`${baseUrl}/api/template`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-Local-Client': 'test' },
     body: JSON.stringify({ template }),
   });
 

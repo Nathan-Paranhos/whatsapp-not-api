@@ -54,7 +54,7 @@ async function createServer(t) {
 function send(baseUrl, method, url, body) {
   return fetch(`${baseUrl}${url}`, {
     method,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-Local-Client': 'test' },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 }

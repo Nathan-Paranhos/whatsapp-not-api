@@ -57,6 +57,7 @@ Se o seu uso é comercial e recorrente, o caminho correto é a [WhatsApp Busines
 - [Situações de um contato](#situações-de-um-contato)
 - [Limites e ritmo](#limites-e-ritmo)
 - [O que pode e o que não pode subir para o Git](#o-que-pode-e-o-que-não-pode-subir-para-o-git)
+- [Como o painel se protege](#como-o-painel-se-protege)
 - [Onde os dados ficam](#onde-os-dados-ficam)
 - [O banco SQLite](#o-banco-sqlite)
 - [Comandos](#comandos)
@@ -508,6 +509,32 @@ Se algum arquivo de dado aparecer em `git status`, ele ainda não está ignorado
 > ```
 
 Se você já commitou um desses por engano, **trocar o arquivo por outro no commit seguinte não resolve**: o conteúdo continua no histórico. Nesse caso, desconecte a sessão do WhatsApp pelo painel (invalida a credencial vazada) e reescreva o histórico antes de publicar o repositório.
+
+---
+
+## Como o painel se protege
+
+Não há login: o que isola os dados é a fronteira de rede. Três camadas, todas com teste de regressão em
+[test/security.test.js](./test/security.test.js).
+
+| Camada | O que faz |
+| --- | --- |
+| **Bind fixo** | O servidor escuta só em `127.0.0.1`. É literal no código, não lê variável de ambiente — não dá para expor na rede por engano |
+| **Validação de Host** | Requisição cujo `Host` não seja `127.0.0.1`, `localhost` ou `[::1]` recebe **403**, em *qualquer* método. É o que barra DNS rebinding: sem isso, uma página externa conseguiria ler sua lista inteira |
+| **Checagem de origem** | Escrita exige prova de mesma origem e **falha fechada** — sem essa prova, nega. Clientes fora do navegador se identificam com o cabeçalho `X-Local-Client` |
+
+Além disso: CSP sem `unsafe-inline`, todo dado do usuário escapado antes de ir ao DOM, valores de SQL sempre por
+*placeholder*, fórmulas neutralizadas no CSV exportado (inclusive com TAB ou CR à frente) e teto de conexões de
+tempo real.
+
+### O que isso não cobre
+
+- **Quem tem acesso à máquina tem acesso a tudo.** Não há autenticação nem registro por autor: qualquer processo
+  local que fale HTTP com a porta pode ler, editar, apagar e disparar mensagens.
+- **O banco não é cifrado em repouso.** Ele guarda telefone, nome, a nota de consentimento e o texto exato enviado.
+  A proteção é a permissão do sistema de arquivos.
+- **Não coloque o painel atrás de proxy reverso** nem exponha a porta. As três camadas acima assumem que só a sua
+  máquina alcança o serviço.
 
 ---
 

@@ -17,3 +17,4 @@ contatos*.json
 .env
 coverage/
 
+docs/security-audit/

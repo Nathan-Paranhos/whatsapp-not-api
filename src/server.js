@@ -51,7 +51,8 @@ function createSystem(overrides = {}) {
 function applyMiddleware(app, appConfig) {
   app.disable('x-powered-by');
   app.use(securityHeaders);
-  app.use(blockForeignMutationOrigins(appConfig.port));
+  app.use(blockForeignHosts());
+  app.use(blockForeignOrigins());
   app.use(express.json({ limit: '96kb' }));
 }
 
@@ -453,13 +454,19 @@ function registerExportRoutes({ app, database }) {
 
 function registerFallbackRoutes({ app, appConfig, database }) {
   app.use('/api', (req, res) => {
-    res.status(404).json({ ok: false, code: 'NOT_FOUND', error: 'Endpoint não encontrado.' });
+    res.status(404).json({
+      ok: false,
+      code: 'NOT_FOUND',
+      error: 'Endpoint não encontrado. Se o painel foi atualizado, feche e rode npm start de novo.',
+    });
   });
 
+  // Sem cache de tempo: em localhost não há ganho, e um app.js velho servido
+  // contra um servidor novo produz erros de endpoint difíceis de diagnosticar.
   app.use(express.static(path.join(appConfig.rootDir, 'public'), {
     extensions: ['html'],
     etag: true,
-    maxAge: '5m',
+    maxAge: 0,
   }));
   app.get('*splat', (req, res) => res.sendFile(path.join(appConfig.rootDir, 'public/index.html')));
 
@@ -539,17 +546,66 @@ function securityHeaders(req, res, next) {
   next();
 }
 
-function blockForeignMutationOrigins(port) {
-  const allowed = new Set([
-    `http://127.0.0.1:${port}`,
-    `http://localhost:${port}`,
-  ]);
+/**
+ * Barra DNS rebinding. O bind em 127.0.0.1 impede que a porta seja alcançada de
+ * outra máquina, mas não impede que um domínio do atacante resolva para
+ * 127.0.0.1 e o navegador da vítima trate a página dele como mesma origem do
+ * painel. Sem esta checagem, um GET de fora lia a lista inteira.
+ *
+ * Vale para TODOS os métodos, inclusive GET — era justamente a isenção do GET
+ * que abria o vazamento.
+ */
+const LOCAL_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
+
+// Extrai só o nome do host, descartando a porta. O rebinding se dá pelo nome —
+// a porta é a que o servidor estiver escutando, e ela varia (config, porta 0
+// nos testes), então prendê-la aqui só produziria falso positivo.
+function hostnameOf(hostHeader) {
+  const host = String(hostHeader || '').trim().toLowerCase();
+  if (host.startsWith('[')) return host.slice(0, host.indexOf(']') + 1) || host;
+  const corte = host.lastIndexOf(':');
+  return corte === -1 ? host : host.slice(0, corte);
+}
+
+function blockForeignHosts() {
+  return (req, res, next) => {
+    if (LOCAL_HOSTNAMES.has(hostnameOf(req.headers.host))) return next();
+    return res.status(403).json({
+      ok: false,
+      code: 'FOREIGN_HOST',
+      error: 'Host não autorizado. O painel responde apenas em 127.0.0.1 ou localhost.',
+    });
+  };
+}
+
+/**
+ * Impede que outra origem provoque escrita. Falha FECHADA: sem prova de mesma
+ * origem a requisição é negada, em vez de liberada. Clientes fora do navegador
+ * (scripts, testes) se identificam com o cabeçalho X-Local-Client.
+ */
+function blockForeignOrigins() {
   return (req, res, next) => {
     if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+
     const origin = req.get('origin');
     const fetchSite = req.get('sec-fetch-site');
-    if ((origin && !allowed.has(origin)) || fetchSite === 'cross-site') {
-      return res.status(403).json({ ok: false, code: 'FOREIGN_ORIGIN', error: 'Origem não autorizada.' });
+    const origemLocal = Boolean(origin) && (() => {
+      try {
+        return LOCAL_HOSTNAMES.has(new URL(origin).hostname.toLowerCase());
+      } catch {
+        return false;
+      }
+    })();
+    const mesmaOrigem = origemLocal
+      || fetchSite === 'same-origin'
+      || Boolean(req.get('x-local-client'));
+
+    if (!mesmaOrigem) {
+      return res.status(403).json({
+        ok: false,
+        code: 'FOREIGN_ORIGIN',
+        error: 'Origem não autorizada.',
+      });
     }
     return next();
   };
@@ -575,7 +631,8 @@ function statusForCode(code) {
 
 function csvCell(value) {
   const text = value == null ? '' : String(value);
-  const safe = /^[=+\-@]/.test(text) ? `'${text}` : text;
+  // TAB e CR são descartados pela planilha antes de avaliar, então também precisam do apóstrofo.
+  const safe = /^[=+\-@\t\r]/.test(text) ? `'${text}` : text;
   return `"${safe.replace(/"/g, '""')}"`;
 }
 

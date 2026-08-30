@@ -1,3 +1,7 @@
+// Um painel aberto usa uma conexão. O teto existe para que abrir conexões em
+// série não esgote sockets e memória do processo.
+const MAX_CLIENTS = 20;
+
 class RealtimeHub {
   constructor() {
     this.clients = new Set();
@@ -6,6 +10,11 @@ class RealtimeHub {
   }
 
   connect(req, res) {
+    if (this.clients.size >= MAX_CLIENTS) {
+      res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ ok: false, code: 'TOO_MANY_STREAMS', error: 'Conexões de tempo real demais.' }));
+      return;
+    }
     res.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
       'Cache-Control': 'no-cache, no-transform',

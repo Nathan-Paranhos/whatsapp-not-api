@@ -295,7 +295,7 @@ function renderContacts() {
 
 function contactRow(contact) {
   const action = primaryContactAction(contact);
-  const tags = contactTags(contact).map((tag) => `<span class="tag ${tag.className}">${escapeHtml(tag.label)}</span>`).join('');
+  const tags = contactTags(contact).map((tag) => `<span class="tag ${escapeHtml(tag.className)}">${escapeHtml(tag.label)}</span>`).join('');
   const phoneLabel = contact.phoneRaw || 'Telefone ausente';
   const details = [
     contact.phoneKind === 'landline' ? 'telefone fixo' : contact.phoneKind === 'mobile' ? 'celular' : '',

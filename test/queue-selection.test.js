@@ -59,7 +59,7 @@ async function createTestServer(t) {
 function post(baseUrl, url, body) {
   return fetch(`${baseUrl}${url}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-Local-Client': 'test' },
     body: JSON.stringify(body),
   });
 }
