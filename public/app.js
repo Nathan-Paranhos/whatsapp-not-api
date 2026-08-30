@@ -11,6 +11,7 @@ const state = {
   autoQrShown: false,
   currentAction: null,
   batchPreview: null,
+  managedContact: null,
 };
 
 const elements = {};
@@ -37,7 +38,7 @@ function cacheElements() {
     'pagination-label', 'page-label', 'previous-page', 'next-page', 'message-template', 'template-count',
     'message-preview', 'save-template', 'activity-list', 'qr-modal', 'qr-frame', 'action-modal',
     'action-form', 'action-modal-icon', 'action-modal-title', 'action-modal-copy', 'action-modal-content',
-    'action-close', 'action-cancel', 'action-confirm', 'toast-region', 'policy-details',
+    'action-close', 'action-cancel', 'action-confirm', 'toast-region', 'policy-details', 'delete-filtered',
   ];
   for (const id of ids) elements[toCamel(id)] = document.getElementById(id);
 }
@@ -77,13 +78,16 @@ function bindEvents() {
     if (event.target.closest('[data-qr-retry]')) retryQrConnection();
   });
   elements.policyDetails.addEventListener('click', openPolicyModal);
+  elements.deleteFiltered.addEventListener('click', openDeleteFilteredModal);
   elements.actionClose.addEventListener('click', () => elements.actionModal.close('cancel'));
   elements.actionCancel.addEventListener('click', () => elements.actionModal.close('cancel'));
   elements.actionForm.addEventListener('submit', handleModalSubmit);
   elements.actionModalContent.addEventListener('click', handleRecipientAction);
+  elements.actionModalContent.addEventListener('click', handleManageAction);
   elements.actionModal.addEventListener('close', () => {
     state.currentAction = null;
     state.batchPreview = null;
+    state.managedContact = null;
     elements.actionModalContent.replaceChildren();
   });
   window.addEventListener('beforeunload', (event) => {
@@ -286,7 +290,6 @@ function contactRow(contact) {
     contact.phoneKind === 'landline' ? 'telefone fixo' : contact.phoneKind === 'mobile' ? 'celular' : '',
     contact.sourceTag ? `[${contact.sourceTag.toLowerCase()}]` : '',
   ].filter(Boolean).join(' · ');
-  const canManage = !['suppressed'].includes(contact.status);
 
   return `<tr data-contact-id="${contact.id}">
     <td class="company-cell">
@@ -301,8 +304,7 @@ function contactRow(contact) {
     <td><div class="status-stack">${tags}</div></td>
     <td class="actions-column"><div class="row-actions">
       ${action ? `<button class="mini-button" type="button" data-action="${action.action}" data-id="${contact.id}">${escapeHtml(action.label)}</button>` : ''}
-      ${canManage ? `<button class="mini-button" type="button" data-action="edit" data-id="${contact.id}" title="Editar nome"><span>Editar</span></button>` : ''}
-      ${canManage && contact.phoneRaw ? `<button class="mini-button danger" type="button" data-action="suppress" data-id="${contact.id}" title="Nunca mais contatar"><span>Bloquear</span></button>` : ''}
+      <button class="mini-button" type="button" data-action="manage" data-id="${contact.id}" title="Editar, bloquear ou apagar"><span>Gerenciar</span></button>
     </div></td>
   </tr>`;
 }
@@ -332,6 +334,7 @@ function contactTags(contact) {
   if (contact.needsReview && !contact.reviewApproved) tags.push({ label: 'Revisar', className: 'amber' });
   if (contact.phoneKind === 'landline') tags.push({ label: 'Fixo', className: '' });
   if (contact.dddMismatch) tags.push({ label: 'DDD divergente', className: 'amber' });
+  if (contact.suppressed && contact.status !== 'suppressed') tags.push({ label: 'Número bloqueado', className: 'red' });
   if (contact.hasCompanyName === false) tags.push({ label: 'Sem nome', className: '' });
   return tags;
 }
@@ -658,7 +661,7 @@ async function handleContactAction(event) {
     consent: openConsentModal,
     review: openReviewModal,
     send: openSingleSendModal,
-    edit: openEditModal,
+    manage: openManageModal,
     suppress: openSuppressModal,
   };
   handlers[button.dataset.action]?.(contact);
@@ -738,20 +741,165 @@ function openSingleSendModal(contact) {
   });
 }
 
-function openEditModal(contact) {
+async function openManageModal(contact) {
+  let stats = { deliveries: 0, sent: 0, suppressed: 0 };
+  try {
+    ({ stats } = await api(`/api/contacts/${contact.id}`));
+  } catch {
+    // Sem as estatísticas o modal ainda funciona; só o aviso fica genérico.
+  }
+
+  const desfazer = [
+    contact.consentStatus === 'confirmed'
+      ? '<button class="text-button" type="button" data-manage="revoke-consent">Revogar opt-in</button>'
+      : '',
+    contact.reviewApproved
+      ? '<button class="text-button" type="button" data-manage="revoke-review">Desfazer revisão</button>'
+      : '',
+    contact.status !== 'suppressed' && contact.phoneRaw
+      ? '<button class="text-button" type="button" data-manage="suppress">Bloquear para sempre</button>'
+      : '',
+  ].filter(Boolean).join('');
+
+  const perda = [
+    stats.sent ? `${stats.sent} mensagem(ns) enviada(s)` : '',
+    stats.deliveries ? `${stats.deliveries} registro(s) de envio` : '',
+  ].filter(Boolean).join(' e ');
+
   openActionModal({
-    title: 'Editar nome da empresa',
-    copy: 'A variável {empresa} usará exatamente este nome.',
-    confirmText: 'Salvar nome',
+    title: 'Gerenciar contato',
+    copy: `#${contact.sourceIndex} · ${contact.company}`,
+    confirmText: 'Salvar alterações',
     content: `<div class="modal-field">
-      <label for="company-name">Nome exibido</label>
-      <input id="company-name" type="text" maxlength="100" value="${escapeHtml(contact.companyName ?? contact.company)}" placeholder="Nome da empresa">
+      <label for="manage-company">Nome da empresa</label>
+      <input id="manage-company" type="text" maxlength="100" value="${escapeHtml(contact.companyName ?? '')}" placeholder="Opcional — é o que entra em {empresa}">
+    </div>
+    <div class="modal-field">
+      <label for="manage-phone">Telefone</label>
+      <input id="manage-phone" type="text" maxlength="40" value="${escapeHtml(contact.phoneRaw ?? '')}" placeholder="(71) 99999-9999">
+    </div>
+    <div class="modal-field">
+      <label for="manage-city">Cidade</label>
+      <input id="manage-city" type="text" maxlength="80" value="${escapeHtml(contact.city ?? '')}" placeholder="Opcional">
+    </div>
+    <p class="modal-note">Trocar o telefone reclassifica o contato e devolve os dados para conferência.</p>
+    ${desfazer ? `<div class="manage-actions">${desfazer}</div>` : ''}
+    <div class="danger-zone">
+      <div>
+        <strong>Apagar da lista</strong>
+        <p>${perda ? `Vai junto: ${escapeHtml(perda)}.` : 'Este contato ainda não recebeu nada.'}${stats.suppressed ? ' O bloqueio do número continua valendo mesmo depois de apagar.' : ''}</p>
+      </div>
+      <button class="mini-button danger" type="button" data-manage="delete">Apagar</button>
     </div>`,
     onConfirm: async () => {
-      const company = document.getElementById('company-name').value.trim();
-      if (!company) throw new Error('Informe um nome válido.');
-      await api(`/api/contacts/${contact.id}`, { method: 'PATCH', body: { company } });
-      toast('Nome atualizado.');
+      const body = {
+        company: document.getElementById('manage-company').value.trim(),
+        phone: document.getElementById('manage-phone').value.trim(),
+        city: document.getElementById('manage-city').value.trim(),
+      };
+      if (!body.company) delete body.company;
+      if (!body.phone) delete body.phone;
+      if (!Object.keys(body).length) throw new Error('Preencha ao menos um campo.');
+
+      await api(`/api/contacts/${contact.id}`, { method: 'PATCH', body });
+      toast('Contato atualizado.');
+      scheduleRefresh();
+    },
+  });
+
+  state.managedContact = contact;
+}
+
+async function handleManageAction(event) {
+  const button = event.target.closest('[data-manage]');
+  if (!button || !state.managedContact) return;
+  const contact = state.managedContact;
+
+  const acao = {
+    'revoke-consent': {
+      pergunta: `Revogar o opt-in de ${contact.company}? Ele sai da fila e volta a precisar de autorização.`,
+      executar: () => api(`/api/contacts/${contact.id}/consent`, { method: 'DELETE', body: { reason: 'Revogado no painel' } }),
+      aviso: 'Opt-in revogado.',
+    },
+    'revoke-review': {
+      pergunta: `Devolver ${contact.company} para conferência de dados?`,
+      executar: () => api(`/api/contacts/${contact.id}/review`, { method: 'DELETE' }),
+      aviso: 'Contato voltou para revisão.',
+    },
+    suppress: {
+      pergunta: `Bloquear ${contact.company} para sempre? O painel não desfaz isso.`,
+      executar: () => api(`/api/contacts/${contact.id}/suppress`, { method: 'POST', body: { reason: 'Bloqueio manual' } }),
+      aviso: 'Contato bloqueado.',
+    },
+    delete: {
+      pergunta: `Apagar ${contact.company} da lista? Não dá para desfazer.`,
+      executar: () => api(`/api/contacts/${contact.id}`, { method: 'DELETE' }),
+      aviso: 'Contato apagado.',
+    },
+  }[button.dataset.manage];
+  if (!acao) return;
+
+  if (!window.confirm(acao.pergunta)) return;
+  setBusy(button, true, 'Aguarde…');
+  try {
+    await acao.executar();
+    toast(acao.aviso, 'warning');
+    elements.actionModal.close('confirm');
+    scheduleRefresh();
+  } catch (error) {
+    toast(error.message, 'error');
+  } finally {
+    setBusy(button, false);
+  }
+}
+
+/**
+ * Apaga exatamente o conjunto que a tabela está mostrando. Manda junto a
+ * contagem exibida: se o banco discordar, o servidor recusa em vez de apagar
+ * um conjunto diferente do que foi conferido.
+ */
+function openDeleteFilteredModal() {
+  const total = state.contacts?.pagination.total || 0;
+  if (!total) return toast('Nenhum contato nos filtros atuais.', 'warning');
+
+  const criterios = [
+    state.filter !== 'all' ? `filtro "${elements.contactFilter.selectedOptions[0].textContent}"` : '',
+    state.city ? `cidade "${state.city}"` : '',
+    state.search ? `busca "${state.search}"` : '',
+  ].filter(Boolean).join(', ') || 'a lista inteira';
+
+  openActionModal({
+    title: `Apagar ${formatNumber(total)} contato(s)?`,
+    copy: `Serão apagados os contatos de ${criterios}. Não dá para desfazer.`,
+    confirmText: 'Apagar definitivamente',
+    danger: true,
+    content: `<div class="check-row">
+      <div>
+        <div>• O histórico de envio desses contatos vai junto.</div>
+        <div>• Quem pediu <strong>SAIR</strong> continua bloqueado: a supressão é por telefone e sobrevive.</div>
+        <div>• Contatos em um lote ativo não são apagados — conclua ou cancele o lote antes.</div>
+      </div>
+    </div>
+    <div class="modal-field">
+      <label for="delete-confirm-text">Digite <strong>APAGAR</strong> para confirmar</label>
+      <input id="delete-confirm-text" type="text" autocomplete="off" placeholder="APAGAR">
+    </div>`,
+    onConfirm: async () => {
+      const digitado = document.getElementById('delete-confirm-text').value.trim().toUpperCase();
+      if (digitado !== 'APAGAR') throw new Error('Digite APAGAR para confirmar.');
+
+      const resposta = await api('/api/contacts/delete-many', {
+        method: 'POST',
+        body: {
+          confirmed: true,
+          expected: total,
+          filter: state.filter,
+          city: state.city,
+          search: state.search,
+        },
+      });
+      toast(`${formatNumber(resposta.deleted)} contato(s) apagados.`, 'warning');
+      state.page = 1;
       scheduleRefresh();
     },
   });

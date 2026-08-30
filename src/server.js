@@ -116,17 +116,89 @@ function registerContactRoutes({ app, database, runner, notify }) {
     }));
   });
 
+  app.get('/api/contacts/:id', (req, res) => {
+    const contact = database.getContact(req.params.id);
+    if (!contact) throw apiError(404, 'NOT_FOUND', 'Contato não encontrado.');
+    res.json({ ok: true, contact, stats: database.getContactStats(req.params.id) });
+  });
+
   app.patch('/api/contacts/:id', (req, res) => {
-    const company = normalizeCompanyName(req.body?.company);
-    if (!company) throw apiError(400, 'INVALID_COMPANY', 'Informe um nome de empresa válido.');
-    if (!database.updateCompanyName(req.params.id, company)) {
+    const patch = {};
+    if (req.body?.company !== undefined) {
+      const company = normalizeCompanyName(req.body.company);
+      // Nome é opcional no produto (lista só com números), mas se veio no
+      // corpo em branco é engano, não intenção de limpar.
+      if (!company) throw apiError(400, 'INVALID_COMPANY', 'Informe um nome de empresa válido.');
+      patch.company = company;
+    }
+    if (req.body?.phone !== undefined) patch.phone = String(req.body.phone);
+    if (req.body?.city !== undefined) patch.city = String(req.body.city);
+    if (!Object.keys(patch).length) {
+      throw apiError(400, 'NOTHING_TO_UPDATE', 'Informe ao menos um campo para alterar.');
+    }
+
+    if (!database.updateContact(req.params.id, patch)) {
       throw apiError(404, 'NOT_FOUND', 'Contato não encontrado.');
     }
-    database.recordEvent({
-      type: 'contact.updated',
-      contactId: Number(req.params.id),
-      title: `Nome atualizado para ${company}`,
-    });
+    if (patch.company) {
+      database.recordEvent({
+        type: 'contact.updated',
+        contactId: Number(req.params.id),
+        title: `Nome atualizado para ${patch.company}`,
+      });
+    }
+    respondWithContact(res, req.params.id);
+  });
+
+  app.delete('/api/contacts/:id', (req, res) => {
+    if (!database.deleteContact(req.params.id)) {
+      throw apiError(404, 'NOT_FOUND', 'Contato não encontrado.');
+    }
+    notify('contacts');
+    res.json({ ok: true, deleted: 1, summary: database.getSummary() });
+  });
+
+  // Apaga exatamente o conjunto que a tela está mostrando. O painel manda de
+  // volta a contagem que exibiu; se ela não bater com a do banco, a lista mudou
+  // desde então e a exclusão é recusada em vez de apagar demais.
+  app.post('/api/contacts/delete-many', (req, res) => {
+    if (req.body?.confirmed !== true) {
+      throw apiError(400, 'CONFIRMATION_REQUIRED', 'Confirme explicitamente a exclusão em massa.');
+    }
+    const criteria = {
+      search: String(req.body?.search || ''),
+      filter: String(req.body?.filter || 'all'),
+      city: String(req.body?.city || ''),
+    };
+
+    const actual = database.countContacts(criteria);
+    if (!actual) throw apiError(400, 'NOTHING_TO_DELETE', 'Nenhum contato corresponde a estes filtros.');
+
+    const expected = Number(req.body?.expected);
+    if (Number.isInteger(expected) && expected !== actual) {
+      throw apiError(
+        409,
+        'COUNT_MISMATCH',
+        `A lista mudou: você confirmou ${expected} contato(s), mas agora são ${actual}. Recarregue e confira de novo.`,
+      );
+    }
+
+    const result = database.deleteContactsByFilter(criteria);
+    notify('contacts');
+    res.json({ ok: true, ...result, summary: database.getSummary() });
+  });
+
+  app.delete('/api/contacts/:id/consent', (req, res) => {
+    if (!database.revokeConsent(req.params.id, req.body?.reason)) {
+      throw apiError(404, 'NOT_FOUND', 'Contato não encontrado.');
+    }
+    respondWithContact(res, req.params.id);
+  });
+
+  app.delete('/api/contacts/:id/review', (req, res) => {
+    if (!database.revokeReview(req.params.id)) {
+      throw apiError(404, 'NOT_FOUND', 'Contato não encontrado.');
+    }
     respondWithContact(res, req.params.id);
   });
 
@@ -443,6 +515,7 @@ function apiError(status, code, message) {
 function statusForCode(code) {
   if (code === 'NOT_FOUND') return 404;
   if (['CAMPAIGN_ACTIVE', 'CONTACT_BLOCKED', 'NO_PAUSED_CAMPAIGN', 'SELECTION_STALE'].includes(code)) return 409;
+  if (['CONTACT_IN_ACTIVE_RUN', 'DUPLICATE_PHONE', 'COUNT_MISMATCH'].includes(code)) return 409;
   if (['WHATSAPP_NOT_READY', 'OUTSIDE_BUSINESS_HOURS'].includes(code)) return 409;
   if (code) return 400;
   return 500;

@@ -3,7 +3,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { DatabaseSync } = require('node:sqlite');
 const { DEFAULT_TEMPLATE } = require('./lib/template');
-const { digitsOnly, maskPhone } = require('./lib/phones');
+const { digitsOnly, maskPhone, normalizeBrazilianPhone, hasCityDddMismatch } = require('./lib/phones');
 
 const ACTIVE_RUN_STATUSES = ['running', 'paused'];
 
@@ -346,15 +346,15 @@ class AppDatabase {
     } : null;
   }
 
-  listContacts({ search = '', filter = 'all', city = '', page = 1, pageSize = 30 } = {}) {
-    const safePage = Math.max(1, Number.parseInt(page, 10) || 1);
-    const safePageSize = Math.min(100, Math.max(10, Number.parseInt(pageSize, 10) || 30));
+  // Monta o WHERE usado pela listagem, pela contagem e pela exclusão em massa.
+  // Um lugar só evita que a tela mostre um conjunto e a exclusão apague outro.
+  buildContactFilter({ search = '', filter = 'all', city = '' } = {}) {
     const conditions = [];
     const params = [];
 
-    if (search.trim()) {
+    if (String(search).trim()) {
       conditions.push('(company_display LIKE ? ESCAPE \'\\\' OR phone_raw LIKE ? ESCAPE \'\\\')');
-      const escaped = search.trim().replace(/[\\%_]/g, '\\$&');
+      const escaped = String(search).trim().replace(/[\\%_]/g, '\\$&');
       params.push(`%${escaped}%`, `%${escaped}%`);
     }
     if (city) {
@@ -375,14 +375,29 @@ class AppDatabase {
       suppressed: "status = 'suppressed'",
       uncertain: "status = 'uncertain'",
       failed: "status = 'failed'",
+      unnamed: "company_display = ''",
     }[filter];
     if (filterSql) conditions.push(filterSql);
 
-    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    return {
+      where: conditions.length ? `WHERE ${conditions.join(' AND ')}` : '',
+      params,
+    };
+  }
+
+  countContacts(criteria) {
+    const { where, params } = this.buildContactFilter(criteria);
+    return Number(this.db.prepare(`SELECT COUNT(*) AS total FROM contacts ${where}`).get(...params).total);
+  }
+
+  listContacts({ search = '', filter = 'all', city = '', page = 1, pageSize = 30 } = {}) {
+    const safePage = Math.max(1, Number.parseInt(page, 10) || 1);
+    const safePageSize = Math.min(100, Math.max(10, Number.parseInt(pageSize, 10) || 30));
+    const { where, params } = this.buildContactFilter({ search, filter, city });
     const countRow = this.db.prepare(`SELECT COUNT(*) AS total FROM contacts ${where}`).get(...params);
     const offset = (safePage - 1) * safePageSize;
     const rows = this.db.prepare(`
-      SELECT * FROM contacts
+      SELECT *, EXISTS(SELECT 1 FROM suppressions s WHERE s.phone_e164 = contacts.phone_e164) AS is_suppressed FROM contacts
       ${where}
       ORDER BY source_index
       LIMIT ? OFFSET ?
@@ -465,18 +480,144 @@ class AppDatabase {
     return report;
   }
 
+  hasJobInActiveRun(contactId) {
+    const placeholders = ACTIVE_RUN_STATUSES.map(() => '?').join(', ');
+    return Boolean(this.db.prepare(`
+      SELECT 1 FROM queue_jobs j
+      JOIN campaign_runs r ON r.id = j.run_id
+      WHERE j.contact_id = ? AND r.status IN (${placeholders})
+      LIMIT 1
+    `).get(Number(contactId), ...ACTIVE_RUN_STATUSES));
+  }
+
+  // O que se perde ao apagar este contato — a tela usa isso para avisar antes.
+  getContactStats(id) {
+    const row = this.db.prepare(`
+      SELECT
+        (SELECT COUNT(*) FROM deliveries WHERE contact_id = ?) AS deliveries,
+        (SELECT COUNT(*) FROM deliveries WHERE contact_id = ? AND status = 'sent') AS sent,
+        (SELECT COUNT(*) FROM suppressions WHERE contact_id = ?) AS suppressed
+    `).get(Number(id), Number(id), Number(id));
+    return Object.fromEntries(Object.entries(row).map(([key, value]) => [key, Number(value || 0)]));
+  }
+
+  /**
+   * Remove o contato de vez. A supressão NÃO vai junto: ela é regravada sem
+   * dono, presa ao telefone. Assim, apagar alguém que pediu SAIR — de propósito
+   * ou por engano — não o traz de volta para a fila numa reimportação.
+   */
+  deleteContact(id) {
+    const contact = this.getContactInternal(id);
+    if (!contact) return false;
+    if (this.hasJobInActiveRun(id)) {
+      const error = new Error('Este contato está em um lote ativo. Conclua ou cancele o lote antes de apagar.');
+      error.code = 'CONTACT_IN_ACTIVE_RUN';
+      throw error;
+    }
+
+    this.transaction(() => {
+      this.db.prepare('UPDATE suppressions SET contact_id = NULL WHERE contact_id = ?').run(Number(id));
+      this.db.prepare('UPDATE events SET contact_id = NULL WHERE contact_id = ?').run(Number(id));
+      this.db.prepare('DELETE FROM queue_jobs WHERE contact_id = ?').run(Number(id));
+      this.db.prepare('DELETE FROM deliveries WHERE contact_id = ?').run(Number(id));
+      this.db.prepare('DELETE FROM contacts WHERE id = ?').run(Number(id));
+      this.recordEvent({
+        type: 'contact.deleted',
+        title: `${displayNameFor(contact)} foi apagado da lista`,
+        detail: { phoneMasked: maskPhone(contact.phone_e164), suppressionKept: true },
+      });
+    });
+    return true;
+  }
+
+  /**
+   * Apaga em massa exatamente o conjunto que a tela está mostrando. Recusa
+   * enquanto houver lote ativo, para não apagar o chão sob os pés da fila.
+   */
+  deleteContactsByFilter(criteria) {
+    if (this.getActiveRun()) {
+      const error = new Error('Conclua ou cancele o lote atual antes de apagar contatos em massa.');
+      error.code = 'CAMPAIGN_ACTIVE';
+      throw error;
+    }
+
+    const { where, params } = this.buildContactFilter(criteria);
+    const ids = this.db.prepare(`SELECT id FROM contacts ${where}`).all(...params).map((row) => Number(row.id));
+    if (!ids.length) return { deleted: 0 };
+
+    const placeholders = ids.map(() => '?').join(', ');
+    this.transaction(() => {
+      this.db.prepare(`UPDATE suppressions SET contact_id = NULL WHERE contact_id IN (${placeholders})`).run(...ids);
+      this.db.prepare(`UPDATE events SET contact_id = NULL WHERE contact_id IN (${placeholders})`).run(...ids);
+      this.db.prepare(`DELETE FROM queue_jobs WHERE contact_id IN (${placeholders})`).run(...ids);
+      this.db.prepare(`DELETE FROM deliveries WHERE contact_id IN (${placeholders})`).run(...ids);
+      this.db.prepare(`DELETE FROM contacts WHERE id IN (${placeholders})`).run(...ids);
+      this.recordEvent({
+        level: 'warning',
+        type: 'contacts.bulk_deleted',
+        title: `${ids.length} contato(s) apagados da lista`,
+        detail: { criteria, suppressionsKept: true },
+      });
+    });
+    return { deleted: ids.length };
+  }
+
+  /**
+   * Desfaz o opt-in. Não desfaz envio já feito — só impede novos. Usado quando
+   * a confirmação foi registrada por engano.
+   */
+  revokeConsent(id, reason = 'Opt-in revogado manualmente') {
+    const contact = this.getContactInternal(id);
+    if (!contact) return false;
+    if (contact.consent_status === 'unknown') return true;
+
+    const now = new Date().toISOString();
+    this.transaction(() => {
+      this.db.prepare(`
+        UPDATE contacts
+        SET consent_status = 'unknown', consent_note = NULL, consent_confirmed_at = NULL, updated_at = ?
+        WHERE id = ?
+      `).run(now, Number(id));
+      this.cancelPendingJobsForContact(Number(id), 'Opt-in revogado', now);
+      this.recordEvent({
+        level: 'warning',
+        type: 'contact.consent_revoked',
+        contactId: Number(id),
+        title: `Opt-in de ${displayNameFor(contact)} foi revogado`,
+        detail: { reason: String(reason).slice(0, 240) },
+      });
+    });
+    return true;
+  }
+
+  revokeReview(id) {
+    const contact = this.getContactInternal(id);
+    if (!contact) return false;
+    const now = new Date().toISOString();
+    this.transaction(() => {
+      this.db.prepare('UPDATE contacts SET review_approved = 0, updated_at = ? WHERE id = ?').run(now, Number(id));
+      this.cancelPendingJobsForContact(Number(id), 'Revisão desfeita', now);
+      this.recordEvent({
+        type: 'contact.review_revoked',
+        contactId: Number(id),
+        title: `Dados de ${displayNameFor(contact)} voltaram para revisão`,
+      });
+    });
+    return true;
+  }
+
   getContact(id) {
-    const row = this.db.prepare('SELECT * FROM contacts WHERE id = ?').get(Number(id));
+    const row = this.db.prepare(`SELECT *, EXISTS(SELECT 1 FROM suppressions s WHERE s.phone_e164 = contacts.phone_e164) AS is_suppressed FROM contacts WHERE id = ?`).get(Number(id));
     return row ? toPublicContact(row) : null;
   }
 
   getContactInternal(id) {
-    return this.db.prepare('SELECT * FROM contacts WHERE id = ?').get(Number(id)) || null;
+    return this.db.prepare(`SELECT *, EXISTS(SELECT 1 FROM suppressions s WHERE s.phone_e164 = contacts.phone_e164) AS is_suppressed FROM contacts WHERE id = ?`).get(Number(id)) || null;
   }
 
   findContactByWhatsAppDigits(value) {
     const digits = digitsOnly(value);
-    const row = this.db.prepare('SELECT * FROM contacts WHERE whatsapp_digits = ?').get(digits);
+    const row = this.db.prepare(`SELECT *, EXISTS(SELECT 1 FROM suppressions s WHERE s.phone_e164 = contacts.phone_e164) AS is_suppressed FROM contacts WHERE whatsapp_digits = ?`).get(digits);
     return row || null;
   }
 
@@ -486,6 +627,82 @@ class AppDatabase {
       UPDATE contacts SET company_display = ?, updated_at = ? WHERE id = ?
     `).run(companyDisplay, now, Number(id));
     return Number(result.changes) > 0;
+  }
+
+  /**
+   * Edita nome, telefone e cidade. Trocar o telefone reclassifica o contato
+   * (celular/fixo, DDD) e derruba a aprovação de revisão: o dado mudou, então
+   * a conferência anterior não vale mais para o número novo.
+   */
+  updateContact(id, { company, phone, city } = {}) {
+    const contact = this.getContactInternal(id);
+    if (!contact) return false;
+    if (this.hasJobInActiveRun(id)) {
+      const error = new Error('Este contato está em um lote ativo. Conclua ou cancele o lote antes de editar.');
+      error.code = 'CONTACT_IN_ACTIVE_RUN';
+      throw error;
+    }
+
+    const changes = {};
+    if (company !== undefined) changes.company_display = String(company).trim().slice(0, 100);
+    if (city !== undefined) changes.city = String(city).trim().slice(0, 80);
+
+    let phoneChanged = false;
+    if (phone !== undefined && String(phone).trim() !== String(contact.phone_raw || '')) {
+      const raw = String(phone).trim();
+      const parsed = normalizeBrazilianPhone(raw);
+      if (!parsed.valid) {
+        const error = new Error('Telefone inválido. Use um número brasileiro com DDD.');
+        error.code = 'INVALID_PHONE';
+        throw error;
+      }
+
+      const taken = this.db.prepare('SELECT id FROM contacts WHERE phone_e164 = ? AND id <> ?')
+        .get(parsed.e164, Number(id));
+      if (taken) {
+        const error = new Error('Outro contato da lista já usa este telefone.');
+        error.code = 'DUPLICATE_PHONE';
+        throw error;
+      }
+
+      const cityName = changes.city ?? contact.city;
+      const mismatch = cityName ? hasCityDddMismatch(cityName, parsed.ddd) : false;
+      Object.assign(changes, {
+        phone_raw: raw,
+        phone_digits: parsed.digits,
+        phone_e164: parsed.e164,
+        whatsapp_digits: parsed.whatsappDigits,
+        phone_kind: parsed.kind,
+        ddd_mismatch: mismatch ? 1 : 0,
+        needs_review: parsed.kind === 'landline' || mismatch ? 1 : 0,
+        review_approved: 0,
+        last_error: null,
+      });
+      // Um contato que estava marcado como sem telefone volta para a fila de
+      // trabalho assim que ganha um número válido.
+      if (contact.status === 'invalid') changes.status = 'pending';
+      phoneChanged = true;
+    }
+
+    if (!Object.keys(changes).length) return true;
+
+    const now = new Date().toISOString();
+    const columns = Object.keys(changes);
+    const assignments = columns.map((column) => `${column} = ?`).join(', ');
+    this.transaction(() => {
+      this.db.prepare(`UPDATE contacts SET ${assignments}, updated_at = ? WHERE id = ?`)
+        .run(...columns.map((column) => changes[column]), now, Number(id));
+      if (phoneChanged) {
+        this.cancelPendingJobsForContact(Number(id), 'Telefone alterado', now);
+        this.recordEvent({
+          type: 'contact.phone_updated',
+          contactId: Number(id),
+          title: `Telefone de ${displayNameFor({ ...contact, ...changes })} foi corrigido`,
+          detail: { de: maskPhone(contact.phone_e164), para: maskPhone(changes.phone_e164) },
+        });
+      }
+    });
+    return true;
   }
 
   confirmConsent(id, note = '') {
@@ -948,6 +1165,7 @@ function toPublicContact(row) {
     company: displayNameFor(row),
     companyName: row.company_display || '',
     hasCompanyName: Boolean(row.company_display),
+    suppressed: Boolean(row.is_suppressed),
     companyRaw: row.company_raw,
     city: row.city,
     phoneRaw: row.phone_raw,
@@ -974,7 +1192,11 @@ function isEligibleContact(row) {
   return row.status === 'pending'
     && row.consent_status === 'confirmed'
     && Boolean(row.review_approved)
-    && Boolean(row.phone_e164);
+    && Boolean(row.phone_e164)
+    // A supressão é por telefone, não por contato: ela sobrevive a apagar e
+    // reimportar o número, e precisa valer também aqui. Sem isto, o envio
+    // individual escaparia da trava que só o SQL do lote aplicava.
+    && !row.is_suppressed;
 }
 
 // Um contato importado só com o número não tem nome para mostrar; a tela cai

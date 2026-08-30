@@ -88,6 +88,7 @@ Tudo em uma tela: o resumo da lista, a fila, a conexão do WhatsApp e a mensagem
 | Envia uma mensagem por vez, com espera sorteada | Não envia em paralelo nem em rajada |
 | Para sozinho diante de resposta, desconexão ou erro | Não retoma sozinho depois de parar |
 | Bloqueia permanentemente quem pedir `SAIR` | Não permite desfazer esse bloqueio pelo painel |
+| Edita nome, telefone e cidade, e apaga contatos | Não apaga o bloqueio de quem pediu `SAIR` |
 
 ---
 
@@ -326,6 +327,41 @@ Só depois de marcar a confirmação de autorização o lote começa.
 Se algum contato da lista que você conferiu deixar de estar elegível entre a conferência e o "Iniciar" — porque respondeu, foi bloqueado ou perdeu o opt-in — **o lote inteiro é recusado**, em vez de sair diferente do que você aprovou.
 
 Durante o envio: **Pausar**, **Retomar** e **Cancelar lote**. Itens ainda pendentes de um lote cancelado voltam para a lista.
+
+---
+
+## Editar e apagar contatos
+
+Cada linha da tabela tem **Gerenciar**, que abre tudo o que dá para fazer com aquele contato.
+
+### Corrigir dados
+
+Nome, telefone e cidade são editáveis. Corrigir o telefone é o caminho para resolver os contatos marcados como *Revisar* ou *Sem telefone*:
+
+- o número é revalidado e o contato é reclassificado (celular ou fixo, DDD conferido contra a cidade);
+- a **aprovação de revisão cai automaticamente** — o dado mudou, então a conferência anterior não vale mais para o número novo;
+- um contato que estava como *Sem telefone* volta para *Pendente* ao ganhar um número válido;
+- número inválido é recusado, e número já usado por outro contato também.
+
+### Desfazer
+
+| Ação | O que faz |
+| --- | --- |
+| **Revogar opt-in** | Volta o contato para *Sem opt-in* e o tira da fila. Serve para quando a confirmação foi registrada por engano |
+| **Desfazer revisão** | Devolve o contato para conferência de dados |
+| **Bloquear para sempre** | Supressão permanente. O painel não desfaz |
+
+### Apagar
+
+O botão **Apagar** remove o contato de vez. O modal diz antes o que vai junto: o histórico de envio daquele contato.
+
+Para apagar em massa, use **Apagar filtrados** no cabeçalho da lista. Ele apaga exatamente o conjunto que a tabela está mostrando — filtro, cidade e busca combinados — e pede que você digite `APAGAR` para confirmar. É assim que se desfaz uma importação errada: filtre, confira o número e apague.
+
+Três garantias que valem conhecer:
+
+- **Quem pediu `SAIR` continua bloqueado.** A supressão é gravada por telefone, não por contato: ela sobrevive a apagar o contato e a reimportar o mesmo número depois. Não existe caminho para "limpar" um bloqueio apagando a linha.
+- **Contato em lote ativo não é apagado nem editado.** Conclua ou cancele o lote antes.
+- **A exclusão em massa confere a contagem.** O painel manda junto o total que exibiu; se o banco discordar, a operação é recusada em vez de apagar um conjunto diferente do que você viu.
 
 ---
 

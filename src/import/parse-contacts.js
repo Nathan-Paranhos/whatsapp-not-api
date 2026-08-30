@@ -114,7 +114,11 @@ function splitNameAndPhone(line) {
     const phone = normalizeBrazilianPhone(digits.slice(-length));
     if (!phone.valid) continue;
 
-    const cut = indexOfLastDigits(line, length);
+    // O corte cai no primeiro dígito; recua sobre "(" e "+" para o telefone
+    // guardado ficar "(71) 99222-2222" e não "71) 99222-2222".
+    let cut = indexOfLastDigits(line, length);
+    while (cut > 0 && '(+'.includes(line[cut - 1])) cut -= 1;
+
     return { name: cleanName(line.slice(0, cut)), phoneRaw: line.slice(cut).trim(), phone };
   }
   return null;

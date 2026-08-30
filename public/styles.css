@@ -332,6 +332,25 @@ textarea { width: 100%; resize: vertical; border: 1px solid var(--line); border-
 .modal-heading p { margin: 7px 0 0; color: var(--ink-soft); font-size: 12px; line-height: 1.55; }
 .modal-icon { display: grid; width: 40px; height: 40px; flex: 0 0 auto; place-items: center; border-radius: 13px; color: var(--amber); background: var(--amber-soft); font-size: 17px; font-weight: 850; }
 .modal-icon.green { color: var(--green-700); background: var(--green-100); }
+.list-actions { display: flex; align-items: center; gap: 8px; }
+.modal-note { margin: 12px 1px 0; color: var(--ink-faint); font-size: 10px; line-height: 1.5; }
+.manage-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.manage-actions .text-button { font-size: 11px; }
+.danger-zone {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 16px;
+  padding: 13px;
+  border: 1px solid #f0d8d5;
+  border-radius: 12px;
+  background: var(--red-soft);
+}
+.danger-zone strong { display: block; color: var(--red); font-size: 12px; }
+.danger-zone p { margin: 3px 0 0; color: var(--ink-soft); font-size: 10px; line-height: 1.5; }
+.danger-zone .mini-button { flex: 0 0 auto; border-color: #e6bdb8; }
+
 .modal-mascot { width: 96px; height: auto; filter: drop-shadow(0 8px 16px rgba(40, 112, 85, 0.2)); }
 .modal-icon svg { width: 20px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 22px; }
