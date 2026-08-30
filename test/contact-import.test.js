@@ -158,3 +158,50 @@ test('banco novo sem lista inicial abre vazio em vez de falhar', (t) => {
   assert.equal(database.getSummary().total, 0);
   assert.deepEqual(database.getCities(), []);
 });
+
+test('apagar todos os contatos não derruba o próximo start nem ressuscita a lista', (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wna-seed-'));
+  const args = {
+    databasePath: path.join(tempDir, 'test.db'),
+    seedPath: path.resolve(__dirname, 'fixtures/contacts.json'),
+  };
+  t.after(() => {
+    const resolved = path.resolve(tempDir);
+    if (resolved.startsWith(path.resolve(os.tmpdir()))) fs.rmSync(resolved, { recursive: true, force: true });
+  });
+
+  const primeira = new AppDatabase(args);
+  assert.ok(primeira.getSummary().total > 0, 'a primeira abertura semeia a lista');
+  primeira.deleteContactsByFilter({});
+  assert.equal(primeira.getSummary().total, 0);
+  primeira.close();
+
+  // Antes da correção isto batia na restrição UNIQUE de imports.source_hash.
+  const segunda = new AppDatabase(args);
+  assert.equal(segunda.getSummary().total, 0, 'a lista apagada de propósito não volta sozinha');
+  segunda.close();
+
+  const terceira = new AppDatabase(args);
+  assert.equal(terceira.getSummary().total, 0);
+  terceira.close();
+});
+
+test('banco existente com contatos não é semeado de novo', (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wna-seed2-'));
+  const args = {
+    databasePath: path.join(tempDir, 'test.db'),
+    seedPath: path.resolve(__dirname, 'fixtures/contacts.json'),
+  };
+  t.after(() => {
+    const resolved = path.resolve(tempDir);
+    if (resolved.startsWith(path.resolve(os.tmpdir()))) fs.rmSync(resolved, { recursive: true, force: true });
+  });
+
+  const primeira = new AppDatabase(args);
+  const total = primeira.getSummary().total;
+  primeira.close();
+
+  const segunda = new AppDatabase(args);
+  assert.equal(segunda.getSummary().total, total, 'reabrir não duplica a lista');
+  segunda.close();
+});

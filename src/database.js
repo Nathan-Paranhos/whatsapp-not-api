@@ -233,6 +233,15 @@ class AppDatabase {
     });
   }
 
+  /**
+   * Semeia a lista inicial uma única vez na vida do banco.
+   *
+   * A tabela vazia não basta como sinal: quem apaga todos os contatos de
+   * propósito não quer a lista de volta no próximo start. O registro em
+   * `imports` é a memória de que a semeadura já aconteceu — sem essa checagem,
+   * reabrir o painel com a lista apagada ressuscitava tudo e ainda batia na
+   * restrição UNIQUE de imports.source_hash, derrubando a inicialização.
+   */
   seedIfEmpty(seedPath) {
     const row = this.db.prepare('SELECT COUNT(*) AS count FROM contacts').get();
     if (Number(row.count) > 0) return;
@@ -240,6 +249,8 @@ class AppDatabase {
     if (!seedPath || !fs.existsSync(seedPath)) return;
 
     const seed = JSON.parse(fs.readFileSync(seedPath, 'utf8'));
+    if (this.db.prepare('SELECT 1 FROM imports WHERE source_hash = ?').get(seed.sourceHash)) return;
+
     const now = new Date().toISOString();
     const insert = this.db.prepare(`
       INSERT INTO contacts (
@@ -279,6 +290,7 @@ class AppDatabase {
       this.db.prepare(`
         INSERT INTO imports (source_hash, summary_json, imported_at)
         VALUES (?, ?, ?)
+        ON CONFLICT(source_hash) DO NOTHING
       `).run(seed.sourceHash, JSON.stringify(seed.summary), seed.importedAt || now);
 
       this.recordEvent({
