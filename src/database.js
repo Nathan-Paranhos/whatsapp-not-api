@@ -155,9 +155,31 @@ class AppDatabase {
       );
 
       CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
+
+      -- Cada execução de importação vira um lote, para poder ser desfeita
+      -- inteira depois. Contatos anteriores a isto ficam com import_batch_id
+      -- nulo e simplesmente não pertencem a lote nenhum.
+      CREATE TABLE IF NOT EXISTS import_batches (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source TEXT,
+        format TEXT,
+        inserted INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS contact_tags (
+        contact_id INTEGER NOT NULL,
+        tag TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (contact_id, tag),
+        FOREIGN KEY (contact_id) REFERENCES contacts(id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_contact_tags_tag ON contact_tags(tag);
     `);
 
     this.ensureColumn('campaign_runs', 'canceled', 'INTEGER NOT NULL DEFAULT 0');
+    this.ensureColumn('contacts', 'import_batch_id', 'INTEGER');
 
     const now = new Date().toISOString();
     this.db.prepare(`
@@ -348,9 +370,18 @@ class AppDatabase {
 
   // Monta o WHERE usado pela listagem, pela contagem e pela exclusão em massa.
   // Um lugar só evita que a tela mostre um conjunto e a exclusão apague outro.
-  buildContactFilter({ search = '', filter = 'all', city = '' } = {}) {
+  buildContactFilter({ search = '', filter = 'all', city = '', tag = '', importBatchId = null } = {}) {
     const conditions = [];
     const params = [];
+
+    if (Number.isInteger(Number(importBatchId)) && importBatchId !== null && importBatchId !== '') {
+      conditions.push('import_batch_id = ?');
+      params.push(Number(importBatchId));
+    }
+    if (String(tag).trim()) {
+      conditions.push('EXISTS (SELECT 1 FROM contact_tags t WHERE t.contact_id = contacts.id AND t.tag = ?)');
+      params.push(String(tag).trim());
+    }
 
     if (String(search).trim()) {
       conditions.push('(company_display LIKE ? ESCAPE \'\\\' OR phone_raw LIKE ? ESCAPE \'\\\')');
@@ -390,14 +421,17 @@ class AppDatabase {
     return Number(this.db.prepare(`SELECT COUNT(*) AS total FROM contacts ${where}`).get(...params).total);
   }
 
-  listContacts({ search = '', filter = 'all', city = '', page = 1, pageSize = 30 } = {}) {
+  listContacts({ page = 1, pageSize = 30, ...criteria } = {}) {
     const safePage = Math.max(1, Number.parseInt(page, 10) || 1);
     const safePageSize = Math.min(100, Math.max(10, Number.parseInt(pageSize, 10) || 30));
-    const { where, params } = this.buildContactFilter({ search, filter, city });
+    // Repassa o critério inteiro: qualquer filtro novo (etiqueta, lote) passa a
+    // valer na listagem sem precisar ser costurado aqui de novo.
+    const { where, params } = this.buildContactFilter(criteria);
     const countRow = this.db.prepare(`SELECT COUNT(*) AS total FROM contacts ${where}`).get(...params);
     const offset = (safePage - 1) * safePageSize;
     const rows = this.db.prepare(`
-      SELECT *, EXISTS(SELECT 1 FROM suppressions s WHERE s.phone_e164 = contacts.phone_e164) AS is_suppressed FROM contacts
+      SELECT *, EXISTS(SELECT 1 FROM suppressions s WHERE s.phone_e164 = contacts.phone_e164) AS is_suppressed,
+             (SELECT GROUP_CONCAT(t.tag, ',') FROM contact_tags t WHERE t.contact_id = contacts.id) AS tag_list FROM contacts
       ${where}
       ORDER BY source_index
       LIMIT ? OFFSET ?
@@ -419,7 +453,7 @@ class AppDatabase {
    * pulado, nunca sobrescrito: reimportar o mesmo arquivo não duplica ninguém
    * nem apaga o opt-in já registrado.
    */
-  importContacts(contacts) {
+  importContacts(contacts, { source = null, format = null } = {}) {
     const now = new Date().toISOString();
     const nextIndex = Number(
       this.db.prepare('SELECT COALESCE(MAX(source_index), 0) AS last FROM contacts').get().last,
@@ -430,12 +464,18 @@ class AppDatabase {
         source_index, source_line, section_occurrence, company_raw, company_display, city,
         phone_raw, phone_digits, phone_e164, whatsapp_digits, phone_kind, source_tag,
         ddd_mismatch, needs_review, review_approved, consent_status, status, sent_at,
-        created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        import_batch_id, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
-    const report = { inserted: 0, duplicated: 0, invalid: 0 };
+    const report = { inserted: 0, duplicated: 0, invalid: 0, batchId: null };
     this.transaction(() => {
+      // Cada importação vira um lote próprio, para poder ser desfeita inteira
+      // depois sem depender de filtro nenhum.
+      report.batchId = Number(this.db.prepare(`
+        INSERT INTO import_batches (source, format, created_at) VALUES (?, ?, ?)
+      `).run(source, format, now).lastInsertRowid);
+
       let index = nextIndex;
       for (const contact of contacts) {
         if (contact.phoneE164 && existing.get(contact.phoneE164)) {
@@ -464,12 +504,15 @@ class AppDatabase {
           contact.consentStatus || 'unknown',
           contact.status || 'pending',
           contact.sentAt ?? null,
+          report.batchId,
           now,
           now,
         );
         report.inserted += 1;
       }
 
+      this.db.prepare('UPDATE import_batches SET inserted = ? WHERE id = ?')
+        .run(report.inserted, report.batchId);
       this.recordEvent({
         type: 'import.completed',
         title: `${report.inserted} contato(s) importados`,
@@ -478,6 +521,80 @@ class AppDatabase {
     });
 
     return report;
+  }
+
+  /**
+   * Lotes de importação, com quantos contatos daquele lote ainda existem. Os
+   * contatos da lista inicial e os de versões anteriores ficam fora — eles não
+   * pertencem a lote nenhum e por isso não aparecem aqui.
+   */
+  listImportBatches(limit = 30) {
+    return this.db.prepare(`
+      SELECT b.id, b.source, b.format, b.inserted, b.created_at,
+             (SELECT COUNT(*) FROM contacts c WHERE c.import_batch_id = b.id) AS remaining
+      FROM import_batches b
+      ORDER BY b.id DESC
+      LIMIT ?
+    `).all(Math.min(100, Math.max(1, Number(limit) || 30))).map((row) => ({
+      id: Number(row.id),
+      source: row.source,
+      format: row.format,
+      inserted: Number(row.inserted),
+      remaining: Number(row.remaining),
+      createdAt: row.created_at,
+    }));
+  }
+
+  // Desfaz uma importação inteira: apaga só o que entrou naquele lote e que
+  // ainda está lá. Usa a mesma exclusão segura, então a supressão sobrevive.
+  deleteImportBatch(batchId) {
+    const batch = this.db.prepare('SELECT * FROM import_batches WHERE id = ?').get(Number(batchId));
+    if (!batch) return null;
+
+    const result = this.deleteContactsByFilter({ importBatchId: Number(batchId) });
+    this.db.prepare('DELETE FROM import_batches WHERE id = ?').run(Number(batchId));
+    return { ...result, source: batch.source };
+  }
+
+  // --- 3. etiquetas -----------------------------------------------------------
+
+  listTags() {
+    return this.db.prepare(`
+      SELECT t.tag, COUNT(*) AS total
+      FROM contact_tags t
+      JOIN contacts c ON c.id = t.contact_id
+      GROUP BY t.tag
+      ORDER BY t.tag COLLATE NOCASE
+    `).all().map((row) => ({ tag: row.tag, total: Number(row.total) }));
+  }
+
+  listContactTags(contactId) {
+    return this.db.prepare('SELECT tag FROM contact_tags WHERE contact_id = ? ORDER BY tag COLLATE NOCASE')
+      .all(Number(contactId)).map((row) => row.tag);
+  }
+
+  /**
+   * Substitui as etiquetas do contato pelo conjunto informado. Etiqueta é
+   * texto livre curto, normalizado em minúsculas para "Clientes" e "clientes"
+   * não virarem dois segmentos diferentes.
+   */
+  setContactTags(id, tags) {
+    const contact = this.getContactInternal(id);
+    if (!contact) return false;
+
+    const limpas = [...new Set(
+      (Array.isArray(tags) ? tags : [])
+        .map((tag) => String(tag).trim().replace(/\s+/g, ' ').toLowerCase().slice(0, 40))
+        .filter(Boolean),
+    )].slice(0, 20);
+
+    const now = new Date().toISOString();
+    this.transaction(() => {
+      this.db.prepare('DELETE FROM contact_tags WHERE contact_id = ?').run(Number(id));
+      const insert = this.db.prepare('INSERT INTO contact_tags (contact_id, tag, created_at) VALUES (?, ?, ?)');
+      for (const tag of limpas) insert.run(Number(id), tag, now);
+    });
+    return true;
   }
 
   hasJobInActiveRun(contactId) {
@@ -518,6 +635,7 @@ class AppDatabase {
     this.transaction(() => {
       this.db.prepare('UPDATE suppressions SET contact_id = NULL WHERE contact_id = ?').run(Number(id));
       this.db.prepare('UPDATE events SET contact_id = NULL WHERE contact_id = ?').run(Number(id));
+      this.db.prepare('DELETE FROM contact_tags WHERE contact_id = ?').run(Number(id));
       this.db.prepare('DELETE FROM queue_jobs WHERE contact_id = ?').run(Number(id));
       this.db.prepare('DELETE FROM deliveries WHERE contact_id = ?').run(Number(id));
       this.db.prepare('DELETE FROM contacts WHERE id = ?').run(Number(id));
@@ -549,6 +667,7 @@ class AppDatabase {
     this.transaction(() => {
       this.db.prepare(`UPDATE suppressions SET contact_id = NULL WHERE contact_id IN (${placeholders})`).run(...ids);
       this.db.prepare(`UPDATE events SET contact_id = NULL WHERE contact_id IN (${placeholders})`).run(...ids);
+      this.db.prepare(`DELETE FROM contact_tags WHERE contact_id IN (${placeholders})`).run(...ids);
       this.db.prepare(`DELETE FROM queue_jobs WHERE contact_id IN (${placeholders})`).run(...ids);
       this.db.prepare(`DELETE FROM deliveries WHERE contact_id IN (${placeholders})`).run(...ids);
       this.db.prepare(`DELETE FROM contacts WHERE id IN (${placeholders})`).run(...ids);
@@ -607,17 +726,20 @@ class AppDatabase {
   }
 
   getContact(id) {
-    const row = this.db.prepare(`SELECT *, EXISTS(SELECT 1 FROM suppressions s WHERE s.phone_e164 = contacts.phone_e164) AS is_suppressed FROM contacts WHERE id = ?`).get(Number(id));
+    const row = this.db.prepare(`SELECT *, EXISTS(SELECT 1 FROM suppressions s WHERE s.phone_e164 = contacts.phone_e164) AS is_suppressed,
+             (SELECT GROUP_CONCAT(t.tag, ',') FROM contact_tags t WHERE t.contact_id = contacts.id) AS tag_list FROM contacts WHERE id = ?`).get(Number(id));
     return row ? toPublicContact(row) : null;
   }
 
   getContactInternal(id) {
-    return this.db.prepare(`SELECT *, EXISTS(SELECT 1 FROM suppressions s WHERE s.phone_e164 = contacts.phone_e164) AS is_suppressed FROM contacts WHERE id = ?`).get(Number(id)) || null;
+    return this.db.prepare(`SELECT *, EXISTS(SELECT 1 FROM suppressions s WHERE s.phone_e164 = contacts.phone_e164) AS is_suppressed,
+             (SELECT GROUP_CONCAT(t.tag, ',') FROM contact_tags t WHERE t.contact_id = contacts.id) AS tag_list FROM contacts WHERE id = ?`).get(Number(id)) || null;
   }
 
   findContactByWhatsAppDigits(value) {
     const digits = digitsOnly(value);
-    const row = this.db.prepare(`SELECT *, EXISTS(SELECT 1 FROM suppressions s WHERE s.phone_e164 = contacts.phone_e164) AS is_suppressed FROM contacts WHERE whatsapp_digits = ?`).get(digits);
+    const row = this.db.prepare(`SELECT *, EXISTS(SELECT 1 FROM suppressions s WHERE s.phone_e164 = contacts.phone_e164) AS is_suppressed,
+             (SELECT GROUP_CONCAT(t.tag, ',') FROM contact_tags t WHERE t.contact_id = contacts.id) AS tag_list FROM contacts WHERE whatsapp_digits = ?`).get(digits);
     return row || null;
   }
 
@@ -1149,12 +1271,90 @@ class AppDatabase {
     }));
   }
 
-  exportRows() {
+  exportRows(criteria = {}) {
+    const { where, params } = this.buildContactFilter(criteria);
     return this.db.prepare(`
       SELECT source_index, company_display, city, phone_raw, phone_e164, phone_kind,
-             source_tag, needs_review, review_approved, consent_status, status, sent_at, replied_at, last_error
-      FROM contacts ORDER BY source_index
-    `).all();
+             source_tag, needs_review, review_approved, consent_status, consent_note,
+             status, sent_at, replied_at, last_error
+      FROM contacts
+      ${where}
+      ORDER BY source_index
+    `).all(...params);
+  }
+
+  // --- 1. histórico de envio de um contato -----------------------------------
+
+  /**
+   * O que já saiu para este contato, do mais recente para o mais antigo. Guarda
+   * a mensagem exata que foi enviada, não o modelo atual: se o texto mudou
+   * depois, o histórico continua mostrando o que a pessoa recebeu.
+   */
+  listDeliveries(contactId, limit = 20) {
+    return this.db.prepare(`
+      SELECT id, run_id, status, rendered_message, message_id, ack, error, created_at, sent_at
+      FROM deliveries
+      WHERE contact_id = ?
+      ORDER BY id DESC
+      LIMIT ?
+    `).all(Number(contactId), Math.min(100, Math.max(1, Number(limit) || 20)))
+      .map((row) => ({
+        id: Number(row.id),
+        status: row.status,
+        message: row.rendered_message,
+        messageId: row.message_id,
+        ack: row.ack === null ? null : Number(row.ack),
+        error: row.error,
+        createdAt: row.created_at,
+        sentAt: row.sent_at,
+      }));
+  }
+
+  // --- 5. desfecho manual de um envio incerto --------------------------------
+
+  /**
+   * Um envio incerto nunca é reenviado sozinho — a decisão é humana. Aqui ela
+   * é registrada: ou a mensagem chegou (vira "sent"), ou não chegou e o contato
+   * volta para a fila (vira "pending").
+   */
+  resolveUncertain(id, outcome) {
+    if (!['sent', 'pending'].includes(outcome)) {
+      const error = new Error('Escolha se a mensagem chegou ou se o contato volta para a fila.');
+      error.code = 'INVALID_OUTCOME';
+      throw error;
+    }
+
+    const contact = this.getContactInternal(id);
+    if (!contact) return false;
+    if (contact.status !== 'uncertain') {
+      const error = new Error('Só um contato com resultado incerto pode ser resolvido assim.');
+      error.code = 'CONTACT_NOT_UNCERTAIN';
+      throw error;
+    }
+
+    const now = new Date().toISOString();
+    this.transaction(() => {
+      if (outcome === 'sent') {
+        this.db.prepare(`
+          UPDATE contacts
+          SET status = 'sent', sent_at = COALESCE(sent_at, ?), last_error = NULL, updated_at = ?
+          WHERE id = ?
+        `).run(now, now, Number(id));
+      } else {
+        this.db.prepare(`
+          UPDATE contacts SET status = 'pending', last_error = NULL, updated_at = ? WHERE id = ?
+        `).run(now, Number(id));
+      }
+      this.recordEvent({
+        type: 'contact.uncertain_resolved',
+        contactId: Number(id),
+        title: outcome === 'sent'
+          ? `${displayNameFor(contact)} confirmado como enviado`
+          : `${displayNameFor(contact)} voltou para a fila`,
+        detail: { outcome },
+      });
+    });
+    return true;
   }
 }
 
@@ -1166,6 +1366,7 @@ function toPublicContact(row) {
     companyName: row.company_display || '',
     hasCompanyName: Boolean(row.company_display),
     suppressed: Boolean(row.is_suppressed),
+    tags: row.tag_list ? String(row.tag_list).split(',').sort() : [],
     companyRaw: row.company_raw,
     city: row.city,
     phoneRaw: row.phone_raw,

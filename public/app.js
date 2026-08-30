@@ -5,6 +5,7 @@ const state = {
   search: '',
   filter: 'all',
   city: '',
+  tag: '',
   templateDirty: false,
   contactsRequestId: 0,
   refreshTimer: null,
@@ -38,7 +39,7 @@ function cacheElements() {
     'pagination-label', 'page-label', 'previous-page', 'next-page', 'message-template', 'template-count',
     'message-preview', 'save-template', 'activity-list', 'qr-modal', 'qr-frame', 'action-modal',
     'action-form', 'action-modal-icon', 'action-modal-title', 'action-modal-copy', 'action-modal-content',
-    'action-close', 'action-cancel', 'action-confirm', 'toast-region', 'policy-details', 'delete-filtered',
+    'action-close', 'action-cancel', 'action-confirm', 'toast-region', 'policy-details', 'delete-filtered', 'tag-filter', 'show-imports', 'export-csv',
   ];
   for (const id of ids) elements[toCamel(id)] = document.getElementById(id);
 }
@@ -79,11 +80,18 @@ function bindEvents() {
   });
   elements.policyDetails.addEventListener('click', openPolicyModal);
   elements.deleteFiltered.addEventListener('click', openDeleteFilteredModal);
+  elements.showImports.addEventListener('click', openImportsModal);
+  elements.tagFilter.addEventListener('change', () => {
+    state.tag = elements.tagFilter.value;
+    state.page = 1;
+    loadContacts().catch((error) => toast(error.message, 'error'));
+  });
   elements.actionClose.addEventListener('click', () => elements.actionModal.close('cancel'));
   elements.actionCancel.addEventListener('click', () => elements.actionModal.close('cancel'));
   elements.actionForm.addEventListener('submit', handleModalSubmit);
   elements.actionModalContent.addEventListener('click', handleRecipientAction);
   elements.actionModalContent.addEventListener('click', handleManageAction);
+  elements.actionModalContent.addEventListener('click', handleImportAction);
   elements.actionModal.addEventListener('close', () => {
     state.currentAction = null;
     state.batchPreview = null;
@@ -122,6 +130,7 @@ async function loadContacts({ silent = false } = {}) {
   });
   if (state.search) params.set('search', state.search);
   if (state.city) params.set('city', state.city);
+  if (state.tag) params.set('tag', state.tag);
   const contacts = await api(`/api/contacts?${params}`);
   if (requestId !== state.contactsRequestId) return state.contacts;
   state.contacts = contacts;
@@ -137,6 +146,7 @@ function renderBootstrap({ initial = false } = {}) {
   renderQueue(data.queue);
   renderEvents(data.events);
   renderCities(data.cities);
+  renderTags(data.tags);
   elements.policyDetails.disabled = false;
 
   if (!state.templateDirty) {
@@ -280,6 +290,7 @@ function renderContacts() {
   elements.pageLabel.textContent = `${pagination.page} / ${pagination.pages}`;
   elements.previousPage.disabled = pagination.page <= 1;
   elements.nextPage.disabled = pagination.page >= pagination.pages;
+  updateExportLink();
 }
 
 function contactRow(contact) {
@@ -335,6 +346,7 @@ function contactTags(contact) {
   if (contact.phoneKind === 'landline') tags.push({ label: 'Fixo', className: '' });
   if (contact.dddMismatch) tags.push({ label: 'DDD divergente', className: 'amber' });
   if (contact.suppressed && contact.status !== 'suppressed') tags.push({ label: 'Número bloqueado', className: 'red' });
+  for (const tag of contact.tags || []) tags.push({ label: tag, className: 'blue' });
   if (contact.hasCompanyName === false) tags.push({ label: 'Sem nome', className: '' });
   return tags;
 }
@@ -361,6 +373,31 @@ function renderCities(cities) {
     elements.cityFilter.append(option);
   }
   elements.cityFilter.value = selected;
+}
+
+function renderTags(tags) {
+  const selected = state.tag;
+  elements.tagFilter.replaceChildren(new Option('Todas as etiquetas', ''));
+  for (const item of tags || []) {
+    elements.tagFilter.append(new Option(`${item.tag} (${item.total})`, item.tag));
+  }
+  elements.tagFilter.value = selected;
+  // Uma etiqueta pode ter deixado de existir; nesse caso o filtro volta a "todas".
+  if (elements.tagFilter.value !== selected) state.tag = '';
+  elements.tagFilter.hidden = !(tags || []).length && !selected;
+}
+
+// A exportação acompanha o que a tela está mostrando, em vez de despejar a base
+// inteira toda vez.
+function updateExportLink() {
+  const params = new URLSearchParams();
+  if (state.filter !== 'all') params.set('filter', state.filter);
+  if (state.search) params.set('search', state.search);
+  if (state.city) params.set('city', state.city);
+  if (state.tag) params.set('tag', state.tag);
+  const query = params.toString();
+  elements.exportCsv.href = query ? `/api/export.csv?${query}` : '/api/export.csv';
+  elements.exportCsv.textContent = query ? 'Exportar filtrados' : 'Exportar CSV';
 }
 
 function updateTemplatePreview() {
@@ -743,10 +780,13 @@ function openSingleSendModal(contact) {
 
 async function openManageModal(contact) {
   let stats = { deliveries: 0, sent: 0, suppressed: 0 };
+  let historico = [];
   try {
-    ({ stats } = await api(`/api/contacts/${contact.id}`));
+    const detalhe = await api(`/api/contacts/${contact.id}`);
+    stats = detalhe.stats;
+    historico = detalhe.deliveries || [];
   } catch {
-    // Sem as estatísticas o modal ainda funciona; só o aviso fica genérico.
+    // Sem o detalhe o modal ainda edita; só o histórico e o aviso somem.
   }
 
   const desfazer = [
@@ -760,6 +800,30 @@ async function openManageModal(contact) {
       ? '<button class="text-button" type="button" data-manage="suppress">Bloquear para sempre</button>'
       : '',
   ].filter(Boolean).join('');
+
+  // Envio incerto é o único desfecho que o sistema não decide sozinho.
+  const incerto = contact.status === 'uncertain' ? `<div class="uncertain-box">
+    <strong>Resultado incerto</strong>
+    <p>A conexão caiu durante o envio e não dá para saber se a mensagem chegou. Confira no WhatsApp e diga o que aconteceu — o painel nunca reenvia sozinho.</p>
+    <div class="manage-actions">
+      <button class="text-button" type="button" data-manage="resolve-sent">A mensagem chegou</button>
+      <button class="text-button" type="button" data-manage="resolve-pending">Não chegou, voltar para a fila</button>
+    </div>
+  </div>` : '';
+
+  const historicoHtml = historico.length ? `<details class="history">
+    <summary>Histórico de envio (${historico.length})</summary>
+    <ol class="history-list">
+      ${historico.map((item) => `<li>
+        <div class="history-head">
+          <span class="tag ${deliveryTagClass(item.status)}">${escapeHtml(item.status)}</span>
+          <time datetime="${escapeHtml(item.createdAt)}">${escapeHtml(relativeTime(item.sentAt || item.createdAt))}</time>
+        </div>
+        <p>${escapeHtml(item.message)}</p>
+        ${item.error ? `<small>${escapeHtml(item.error)}</small>` : ''}
+      </li>`).join('')}
+    </ol>
+  </details>` : ''
 
   const perda = [
     stats.sent ? `${stats.sent} mensagem(ns) enviada(s)` : '',
@@ -782,7 +846,13 @@ async function openManageModal(contact) {
       <label for="manage-city">Cidade</label>
       <input id="manage-city" type="text" maxlength="80" value="${escapeHtml(contact.city ?? '')}" placeholder="Opcional">
     </div>
+    <div class="modal-field">
+      <label for="manage-tags">Etiquetas</label>
+      <input id="manage-tags" type="text" maxlength="200" value="${escapeHtml((contact.tags || []).join(', '))}" placeholder="Separe por vírgula: clientes, evento, vip">
+    </div>
     <p class="modal-note">Trocar o telefone reclassifica o contato e devolve os dados para conferência.</p>
+    ${incerto}
+    ${historicoHtml}
     ${desfazer ? `<div class="manage-actions">${desfazer}</div>` : ''}
     <div class="danger-zone">
       <div>
@@ -802,12 +872,20 @@ async function openManageModal(contact) {
       if (!Object.keys(body).length) throw new Error('Preencha ao menos um campo.');
 
       await api(`/api/contacts/${contact.id}`, { method: 'PATCH', body });
+      await api(`/api/contacts/${contact.id}/tags`, {
+        method: 'PUT',
+        body: { tags: document.getElementById('manage-tags').value.split(',') },
+      });
       toast('Contato atualizado.');
       scheduleRefresh();
     },
   });
 
   state.managedContact = contact;
+}
+
+function deliveryTagClass(status) {
+  return { sent: 'green', invalid: 'red', failed: 'red', uncertain: 'amber' }[status] || '';
 }
 
 async function handleManageAction(event) {
@@ -830,6 +908,16 @@ async function handleManageAction(event) {
       pergunta: `Bloquear ${contact.company} para sempre? O painel não desfaz isso.`,
       executar: () => api(`/api/contacts/${contact.id}/suppress`, { method: 'POST', body: { reason: 'Bloqueio manual' } }),
       aviso: 'Contato bloqueado.',
+    },
+    'resolve-sent': {
+      pergunta: `Confirmar que ${contact.company} recebeu a mensagem?`,
+      executar: () => api(`/api/contacts/${contact.id}/resolve`, { method: 'POST', body: { outcome: 'sent' } }),
+      aviso: 'Marcado como enviado.',
+    },
+    'resolve-pending': {
+      pergunta: `Devolver ${contact.company} para a fila? Ele poderá receber a mensagem de novo.`,
+      executar: () => api(`/api/contacts/${contact.id}/resolve`, { method: 'POST', body: { outcome: 'pending' } }),
+      aviso: 'Contato voltou para a fila.',
     },
     delete: {
       pergunta: `Apagar ${contact.company} da lista? Não dá para desfazer.`,
@@ -903,6 +991,61 @@ function openDeleteFilteredModal() {
       scheduleRefresh();
     },
   });
+}
+
+/**
+ * Lista as importações já feitas e permite desfazer uma inteira. Só entram aqui
+ * as importações registradas como lote — a lista inicial e o que veio antes
+ * disso não pertencem a lote nenhum e continuam intocados.
+ */
+async function openImportsModal() {
+  let batches = [];
+  try {
+    ({ batches } = await api('/api/imports'));
+  } catch (error) {
+    return toast(error.message, 'error');
+  }
+
+  const linhas = batches.length
+    ? batches.map((batch) => `<li>
+        <div>
+          <strong>${escapeHtml(batch.source || 'importação sem arquivo')}</strong>
+          <span>#${batch.id} · ${escapeHtml(batch.format || '—')} · ${formatNumber(batch.inserted)} importados · ${formatNumber(batch.remaining)} ainda na lista · ${escapeHtml(relativeTime(batch.createdAt))}</span>
+        </div>
+        ${batch.remaining
+          ? `<button class="mini-button danger" type="button" data-import="${batch.id}">Desfazer</button>`
+          : '<span class="tag">nada a desfazer</span>'}
+      </li>`).join('')
+    : '<li class="history-empty">Nenhuma importação registrada ainda. Use <code>npm run import</code>.</li>';
+
+  openActionModal({
+    title: 'Importações',
+    copy: 'Desfazer uma importação apaga só os contatos que entraram nela e que ainda estão na lista.',
+    confirmText: 'Fechar',
+    hideCancel: true,
+    content: `<ul class="import-list">${linhas}</ul>`,
+    onConfirm: async () => {},
+  });
+}
+
+async function handleImportAction(event) {
+  const button = event.target.closest('[data-import]');
+  if (!button) return;
+  const id = button.dataset.import;
+
+  if (!window.confirm('Desfazer esta importação? Os contatos dela serão apagados. Quem pediu SAIR continua bloqueado.')) return;
+  setBusy(button, true, 'Desfazendo…');
+  try {
+    const resposta = await api(`/api/imports/${id}`, { method: 'DELETE', body: { confirmed: true } });
+    toast(`${formatNumber(resposta.deleted)} contato(s) apagados.`, 'warning');
+    elements.actionModal.close('confirm');
+    state.page = 1;
+    scheduleRefresh();
+  } catch (error) {
+    toast(error.message, 'error');
+  } finally {
+    setBusy(button, false);
+  }
 }
 
 function openSuppressModal(contact) {

@@ -140,8 +140,9 @@
                 <h2>Empresas</h2>
               </div>
               <div class="list-actions">
+                <button class="button button-secondary button-compact" id="show-imports" type="button">Importações</button>
                 <button class="button button-ghost button-compact" id="delete-filtered" type="button">Apagar filtrados</button>
-                <a class="button button-secondary button-compact" href="/api/export.csv" download>Exportar CSV</a>
+                <a class="button button-secondary button-compact" id="export-csv" href="/api/export.csv" download>Exportar CSV</a>
               </div>
             </div>
 
@@ -170,6 +171,10 @@
               <label class="select-wrap city-select">
                 <span class="sr-only">Filtrar por cidade</span>
                 <select id="city-filter"><option value="">Todas as cidades</option></select>
+              </label>
+              <label class="select-wrap">
+                <span class="sr-only">Filtrar por etiqueta</span>
+                <select id="tag-filter"><option value="">Todas as etiquetas</option></select>
               </label>
             </div>
 

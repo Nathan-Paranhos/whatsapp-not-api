@@ -336,6 +336,28 @@ textarea { width: 100%; resize: vertical; border: 1px solid var(--line); border-
 .modal-note { margin: 12px 1px 0; color: var(--ink-faint); font-size: 10px; line-height: 1.5; }
 .manage-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
 .manage-actions .text-button { font-size: 11px; }
+.history { margin-top: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-soft); }
+.history summary { padding: 11px 13px; color: var(--green-800); font-size: 11px; font-weight: 800; cursor: pointer; }
+.history-list { max-height: 240px; margin: 0; padding: 0 13px 12px; overflow-y: auto; list-style: none; }
+.history-list li { padding: 10px 0; border-top: 1px solid var(--line); }
+.history-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.history-head time { color: var(--ink-faint); font-size: 10px; }
+.history-list p { margin: 7px 0 0; color: var(--ink-soft); font-size: 11px; line-height: 1.5; white-space: pre-wrap; }
+.history-list small { display: block; margin-top: 5px; color: var(--red); font-size: 10px; }
+.history-empty { padding: 18px; color: var(--ink-faint); font-size: 11px; text-align: center; }
+
+.uncertain-box { margin-top: 16px; padding: 13px; border: 1px solid #f0e0c2; border-radius: 12px; background: var(--amber-soft); }
+.uncertain-box strong { display: block; color: var(--amber); font-size: 12px; }
+.uncertain-box p { margin: 4px 0 0; color: var(--ink-soft); font-size: 11px; line-height: 1.5; }
+.uncertain-box .manage-actions { margin-top: 10px; padding-top: 10px; border-color: #eadcc0; }
+
+.import-list { max-height: 46vh; margin: 20px 0 0; padding: 0; overflow-y: auto; list-style: none; border: 1px solid var(--line); border-radius: 12px; }
+.import-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 13px; border-bottom: 1px solid var(--line); }
+.import-list li:last-child { border-bottom: 0; }
+.import-list strong { display: block; color: var(--green-950); font-size: 12px; }
+.import-list span { display: block; margin-top: 3px; color: var(--ink-faint); font-size: 10px; }
+.import-list code { padding: 1px 4px; border-radius: 4px; background: var(--green-100); font-size: 10px; }
+
 .danger-zone {
   display: flex;
   align-items: center;

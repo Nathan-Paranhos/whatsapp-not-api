@@ -98,15 +98,19 @@ function main() {
 
   const database = new AppDatabase({ databasePath: config.databasePath, seedPath: null });
   try {
-    const result = database.importContacts(parsed.contacts);
+    const result = database.importContacts(parsed.contacts, {
+      source: path.basename(filePath),
+      format: parsed.format,
+    });
     report([
       '',
-      'Importação concluída:',
+      `Importação concluída (lote #${result.batchId}):`,
       `  ${result.inserted} contato(s) adicionados`,
       `  ${result.duplicated} já existiam e foram mantidos como estavam`,
       `  ${result.invalid} entraram marcados como telefone inválido`,
       '',
       'Nenhum contato entra na fila antes de você registrar o opt-in dele no painel.',
+      'Se importou o arquivo errado, dá para desfazer o lote inteiro pelo painel.',
     ]);
   } finally {
     database.close();

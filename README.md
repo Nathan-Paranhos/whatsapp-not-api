@@ -89,6 +89,7 @@ Tudo em uma tela: o resumo da lista, a fila, a conexão do WhatsApp e a mensagem
 | Para sozinho diante de resposta, desconexão ou erro | Não retoma sozinho depois de parar |
 | Bloqueia permanentemente quem pedir `SAIR` | Não permite desfazer esse bloqueio pelo painel |
 | Edita nome, telefone e cidade, e apaga contatos | Não apaga o bloqueio de quem pediu `SAIR` |
+| Etiqueta, filtra, exporta o filtro e desfaz importações | Não decide sozinho o desfecho de um envio incerto |
 
 ---
 
@@ -351,11 +352,42 @@ Nome, telefone e cidade são editáveis. Corrigir o telefone é o caminho para r
 | **Desfazer revisão** | Devolve o contato para conferência de dados |
 | **Bloquear para sempre** | Supressão permanente. O painel não desfaz |
 
+### Etiquetas
+
+Campo **Etiquetas** no mesmo modal, separadas por vírgula. Servem para segmentar a lista além de cidade e status — `clientes`, `evento`, `retorno`, o que fizer sentido.
+
+São normalizadas em minúsculas, então `Clientes` e `clientes` são a mesma etiqueta. O filtro de etiqueta fica na barra da lista, ao lado de status e cidade, e vale também para exportar e para apagar em massa.
+
+### Histórico de envio
+
+O modal mostra o que já saiu para aquele contato: a data, o desfecho e **a mensagem exata que foi enviada**. Se você mudou o modelo depois, o histórico continua mostrando o texto que a pessoa recebeu — não o texto atual.
+
+### Resolver um envio incerto
+
+Contato com **Resultado incerto** ganha uma caixa própria no modal. O painel não decide isso sozinho: você confere no WhatsApp e diz o que aconteceu.
+
+| Escolha | Efeito |
+| --- | --- |
+| **A mensagem chegou** | Vira *Enviado*, com a data preenchida |
+| **Não chegou, voltar para a fila** | Vira *Pendente* e pode ser enviado de novo |
+
 ### Apagar
 
 O botão **Apagar** remove o contato de vez. O modal diz antes o que vai junto: o histórico de envio daquele contato.
 
 Para apagar em massa, use **Apagar filtrados** no cabeçalho da lista. Ele apaga exatamente o conjunto que a tabela está mostrando — filtro, cidade e busca combinados — e pede que você digite `APAGAR` para confirmar. É assim que se desfaz uma importação errada: filtre, confira o número e apague.
+
+### Desfazer uma importação inteira
+
+O botão **Importações**, no cabeçalho da lista, mostra cada importação já feita — arquivo, formato, quantos entraram e quantos ainda estão na lista — com **Desfazer** ao lado.
+
+Desfazer apaga só os contatos daquele lote que ainda existem. A lista inicial e as outras importações não são tocadas. É o caminho limpo para quando o arquivo errado entrou.
+
+> Só importações feitas a partir desta versão aparecem aqui. Contatos que já estavam na base antes não pertencem a lote nenhum, e por isso não podem ser desfeitos em bloco — para esses, use **Apagar filtrados**.
+
+### Exportar o que está na tela
+
+**Exportar CSV** vira **Exportar filtrados** assim que você aplica qualquer filtro, e passa a exportar exatamente o conjunto visível. O CSV inclui o `consent_note`, ou seja, a origem e a data do opt-in de cada contato.
 
 Três garantias que valem conhecer:
 
@@ -574,7 +606,9 @@ erDiagram
 | `deliveries` | O texto exato enviado, o id da mensagem e a confirmação de entrega |
 | `events` | O histórico que aparece no painel |
 | `settings` | A mensagem em uso |
-| `imports` | Resumo de cada importação |
+| `imports` | Resumo da lista inicial |
+| `import_batches` | Cada importação feita pelo comando, para poder ser desfeita inteira |
+| `contact_tags` | Etiquetas por contato |
 
 O texto enviado fica gravado em `deliveries.rendered_message`: dá para provar depois exatamente o que cada contato recebeu, e quando.
 

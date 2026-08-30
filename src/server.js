@@ -38,6 +38,7 @@ function createSystem(overrides = {}) {
 
   registerBootstrapRoutes(context);
   registerContactRoutes(context);
+  registerImportRoutes(context);
   registerTemplateRoutes(context);
   registerQueueRoutes(context);
   registerWhatsAppRoutes(context);
@@ -72,6 +73,8 @@ function registerBootstrapRoutes({ app, appConfig, database, whatsapp, hub }) {
       template,
       templatePreview: renderTemplate(template, PREVIEW_COMPANY),
       cities: database.getCities(),
+      tags: database.listTags(),
+      imports: database.listImportBatches(10),
       import: database.getImportSummary(),
       events: database.listEvents(24),
       policy: buildPolicy(appConfig),
@@ -111,6 +114,7 @@ function registerContactRoutes({ app, database, runner, notify }) {
       search: String(req.query.search || ''),
       filter: String(req.query.filter || 'all'),
       city: String(req.query.city || ''),
+      tag: String(req.query.tag || ''),
       page: req.query.page,
       pageSize: req.query.pageSize,
     }));
@@ -119,7 +123,31 @@ function registerContactRoutes({ app, database, runner, notify }) {
   app.get('/api/contacts/:id', (req, res) => {
     const contact = database.getContact(req.params.id);
     if (!contact) throw apiError(404, 'NOT_FOUND', 'Contato não encontrado.');
-    res.json({ ok: true, contact, stats: database.getContactStats(req.params.id) });
+    res.json({
+      ok: true,
+      contact,
+      stats: database.getContactStats(req.params.id),
+      deliveries: database.listDeliveries(req.params.id),
+    });
+  });
+
+  // 3. etiquetas: substitui o conjunto inteiro do contato
+  app.put('/api/contacts/:id/tags', (req, res) => {
+    if (!Array.isArray(req.body?.tags)) {
+      throw apiError(400, 'INVALID_TAGS', 'Envie uma lista de etiquetas.');
+    }
+    if (!database.setContactTags(req.params.id, req.body.tags)) {
+      throw apiError(404, 'NOT_FOUND', 'Contato não encontrado.');
+    }
+    respondWithContact(res, req.params.id);
+  });
+
+  // 5. desfecho manual de um envio incerto
+  app.post('/api/contacts/:id/resolve', (req, res) => {
+    if (!database.resolveUncertain(req.params.id, String(req.body?.outcome || ''))) {
+      throw apiError(404, 'NOT_FOUND', 'Contato não encontrado.');
+    }
+    respondWithContact(res, req.params.id);
   });
 
   app.patch('/api/contacts/:id', (req, res) => {
@@ -169,6 +197,7 @@ function registerContactRoutes({ app, database, runner, notify }) {
       search: String(req.body?.search || ''),
       filter: String(req.body?.filter || 'all'),
       city: String(req.body?.city || ''),
+      tag: String(req.body?.tag || ''),
     };
 
     const actual = database.countContacts(criteria);
@@ -236,6 +265,24 @@ function registerContactRoutes({ app, database, runner, notify }) {
 }
 
 // -------------------------------------------------------------------- mensagem
+
+function registerImportRoutes({ app, database, notify }) {
+  app.get('/api/imports', (req, res) => {
+    res.json({ ok: true, batches: database.listImportBatches() });
+  });
+
+  // Desfaz uma importação inteira. Só apaga o que ainda pertence àquele lote:
+  // contatos já removidos ou de outras importações não são tocados.
+  app.delete('/api/imports/:id', (req, res) => {
+    if (req.body?.confirmed !== true) {
+      throw apiError(400, 'CONFIRMATION_REQUIRED', 'Confirme explicitamente que quer desfazer esta importação.');
+    }
+    const result = database.deleteImportBatch(req.params.id);
+    if (!result) throw apiError(404, 'NOT_FOUND', 'Importação não encontrada.');
+    notify('contacts');
+    res.json({ ok: true, ...result, summary: database.getSummary() });
+  });
+}
 
 function registerTemplateRoutes({ app, database, notify }) {
   app.put('/api/template', (req, res) => {
@@ -386,7 +433,12 @@ function registerWhatsAppRoutes({ app, whatsapp, runner, notify }) {
 
 function registerExportRoutes({ app, database }) {
   app.get('/api/export.csv', (req, res) => {
-    const rows = database.exportRows();
+    const rows = database.exportRows({
+      search: String(req.query.search || ''),
+      filter: String(req.query.filter || 'all'),
+      city: String(req.query.city || ''),
+      tag: String(req.query.tag || ''),
+    });
     const headers = Object.keys(rows[0] || {});
     const csv = [headers, ...rows.map((row) => headers.map((key) => row[key]))]
       .map((line) => line.map(csvCell).join(','))
@@ -515,7 +567,7 @@ function apiError(status, code, message) {
 function statusForCode(code) {
   if (code === 'NOT_FOUND') return 404;
   if (['CAMPAIGN_ACTIVE', 'CONTACT_BLOCKED', 'NO_PAUSED_CAMPAIGN', 'SELECTION_STALE'].includes(code)) return 409;
-  if (['CONTACT_IN_ACTIVE_RUN', 'DUPLICATE_PHONE', 'COUNT_MISMATCH'].includes(code)) return 409;
+  if (['CONTACT_IN_ACTIVE_RUN', 'DUPLICATE_PHONE', 'COUNT_MISMATCH', 'CONTACT_NOT_UNCERTAIN'].includes(code)) return 409;
   if (['WHATSAPP_NOT_READY', 'OUTSIDE_BUSINESS_HOURS'].includes(code)) return 409;
   if (code) return 400;
   return 500;
