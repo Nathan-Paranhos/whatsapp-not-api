@@ -82,7 +82,7 @@ Tudo em uma tela: o resumo da lista, a fila, a conexão do WhatsApp e a mensagem
 
 | Faz | Não faz |
 | --- | --- |
-| Importa sua lista em JSON, CSV ou texto | Não busca nem descobre números para você |
+| Importa sua lista em JSON, CSV ou texto, pelo painel ou pelo terminal | Não busca nem descobre números para você |
 | Você escreve a mensagem, com ou sem `{empresa}` | Não escreve a mensagem por você |
 | Exige opt-in registrado contato a contato | Não tem botão de "marcar todos como autorizados" |
 | Mostra a lista de destinatários antes de enviar, com remoção individual | Não dispara nada sem essa conferência |
@@ -178,12 +178,26 @@ Nenhuma dessas pausas se desfaz sozinha. Você retoma no painel, de propósito.
 
 ## 1. Importar a lista
 
+### Pelo painel (sem terminal)
+
+Botão **Importar lista** no cabeçalho da lista. Escolha um arquivo `.json`, `.csv` ou `.txt` — ou simplesmente cole
+o conteúdo no campo de texto.
+
+O painel **analisa primeiro e não grava nada**: mostra o formato reconhecido, quantos contatos têm telefone válido,
+quantos vieram só com o número, quantos precisarão de revisão, uma amostra das primeiras linhas e a lista de avisos.
+Só depois de você confirmar é que a importação acontece.
+
+Se houver contato sem nome, ele pede uma confirmação explícita antes de seguir — sem nome, a mensagem não pode usar
+a variável `{empresa}` para aquele contato.
+
+### Pelo terminal
+
 ```powershell
 npm run import -- "C:\caminho\lista.txt"            # simula e mostra o que faria
 npm run import -- "C:\caminho\lista.txt" --aplicar  # grava
 ```
 
-O formato é detectado sozinho. Nada é gravado sem `--aplicar`.
+O formato é detectado sozinho nos dois caminhos. Nada é gravado sem `--aplicar`.
 
 ### Texto (um por linha)
 
@@ -329,6 +343,15 @@ Só depois de marcar a confirmação de autorização o lote começa.
 Se algum contato da lista que você conferiu deixar de estar elegível entre a conferência e o "Iniciar" — porque respondeu, foi bloqueado ou perdeu o opt-in — **o lote inteiro é recusado**, em vez de sair diferente do que você aprovou.
 
 Durante o envio: **Pausar**, **Retomar** e **Cancelar lote**. Itens ainda pendentes de um lote cancelado voltam para a lista.
+
+### Limpar o lote do painel
+
+Um lote encerrado continua visível com os contadores. Para voltar ao estado inicial, use **Limpar lote** — ou deixe
+marcada a opção de limpar dentro do próprio modal de cancelamento.
+
+Limpar remove o lote e seus itens de fila. **O que já foi enviado continua enviado**: o status de cada contato e o
+histórico com a mensagem exata que saiu não são tocados. Um lote ainda rodando não pode ser limpo — pause ou cancele
+antes.
 
 ---
 

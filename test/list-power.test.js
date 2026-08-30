@@ -251,3 +251,126 @@ test('só contato incerto aceita desfecho manual, e o desfecho precisa ser váli
   assert.equal((await desfechoInvalido.json()).code, 'INVALID_OUTCOME');
   assert.equal(database.getContact(1).status, 'uncertain');
 });
+
+// ------------------------------------------- importação pelo painel
+
+test('importa pelo painel: analisa primeiro, grava só depois de confirmar', async (t) => {
+  const { baseUrl, database } = await createServer(t);
+  const antes = database.getSummary().total;
+  const content = 'Padaria Nova — (71) 99770-0001\nCafé Central, 71997700002';
+
+  const previa = await (await send(baseUrl, 'POST', '/api/imports/upload', { content })).json();
+  assert.equal(previa.imported, false, 'a análise não grava nada');
+  assert.equal(previa.format, 'text');
+  assert.equal(previa.summary.valid, 2);
+  assert.equal(previa.sample.length, 2);
+  assert.equal(database.getSummary().total, antes);
+
+  const gravado = await (await send(baseUrl, 'POST', '/api/imports/upload', {
+    content, filename: 'lista.txt', confirmed: true,
+  })).json();
+  assert.equal(gravado.imported, true);
+  assert.equal(gravado.result.inserted, 2);
+  assert.equal(database.getSummary().total, antes + 2);
+  assert.equal(database.listImportBatches()[0].source, 'lista.txt');
+});
+
+test('importação pelo painel para e avisa quando há contato sem nome', async (t) => {
+  const { baseUrl, database } = await createServer(t);
+  const antes = database.getSummary().total;
+  const content = 'Padaria Nova — 71997700001\n71997700002';
+
+  const bloqueado = await (await send(baseUrl, 'POST', '/api/imports/upload', { content, confirmed: true })).json();
+  assert.equal(bloqueado.needsUnnamedConfirmation, true);
+  assert.equal(bloqueado.imported, false);
+  assert.equal(bloqueado.summary.unnamed, 1);
+  assert.equal(database.getSummary().total, antes, 'nada foi gravado sem a confirmação');
+
+  const liberado = await (await send(baseUrl, 'POST', '/api/imports/upload', {
+    content, confirmed: true, allowUnnamed: true,
+  })).json();
+  assert.equal(liberado.imported, true);
+  assert.equal(database.getSummary().total, antes + 2);
+});
+
+test('importação pelo painel recusa conteúdo vazio ou sem contato utilizável', async (t) => {
+  const { baseUrl } = await createServer(t);
+
+  const vazio = await send(baseUrl, 'POST', '/api/imports/upload', { content: '   ' });
+  assert.equal(vazio.status, 400);
+  assert.equal((await vazio.json()).code, 'EMPTY_CONTENT');
+
+  const inutil = await send(baseUrl, 'POST', '/api/imports/upload', { content: 'linha sem telefone nenhum' });
+  assert.equal(inutil.status, 400);
+  assert.equal((await inutil.json()).code, 'NOTHING_TO_IMPORT');
+});
+
+test('importação pelo painel aceita CSV e JSON colados', async (t) => {
+  const { baseUrl } = await createServer(t);
+
+  const csv = await (await send(baseUrl, 'POST', '/api/imports/upload', {
+    content: 'empresa;telefone\nLoja CSV;71997710001',
+  })).json();
+  assert.equal(csv.format, 'csv');
+
+  const json = await (await send(baseUrl, 'POST', '/api/imports/upload', {
+    content: JSON.stringify([{ empresa: 'Loja JSON', telefone: '71997720001' }]),
+  })).json();
+  assert.equal(json.format, 'json');
+});
+
+// --------------------------------------- limpar o lote do painel
+
+test('limpar o lote devolve a fila ao estado inicial', async (t) => {
+  const { baseUrl, database, system } = await createServer(t);
+  database.setSetting('message_template', 'Oi! Podemos conversar por aqui?');
+  database.confirmConsent(1, 'teste');
+
+  const { runId } = system.runner.start({ limit: 1, intervalSeconds: 180, authorizationAcknowledged: true });
+  system.runner.stop();
+  system.runner.cancel();
+  assert.equal(database.getQueueView().status, 'canceled', 'o lote cancelado continua à vista');
+
+  const response = await send(baseUrl, 'DELETE', `/api/queue/${runId}`);
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).queue.status, 'idle');
+  assert.equal(database.getQueueView().status, 'idle');
+  assert.equal(database.getContact(1).status, 'pending', 'o contato volta para a lista');
+});
+
+test('não dá para limpar um lote que ainda está rodando', async (t) => {
+  const { baseUrl, database, system } = await createServer(t);
+  database.setSetting('message_template', 'Oi! Podemos conversar por aqui?');
+  database.confirmConsent(1, 'teste');
+  const { runId } = system.runner.start({ limit: 1, intervalSeconds: 180, authorizationAcknowledged: true });
+  system.runner.stop();
+
+  const response = await send(baseUrl, 'DELETE', `/api/queue/${runId}`);
+  assert.equal(response.status, 409);
+  assert.equal((await response.json()).code, 'CAMPAIGN_ACTIVE');
+  assert.equal(database.getQueueView().status, 'running');
+});
+
+test('limpar o lote não apaga o histórico do que já foi enviado', async (t) => {
+  const { baseUrl, database } = await createServer(t);
+  database.confirmConsent(1, 'teste');
+  const run = database.createCampaign({ contactIds: [1], templateHash: 'hash', intervalSeconds: 180 });
+  const job = database.leaseNextJob(run.id, () => 'mensagem enviada', 'hash');
+  database.completeJob({
+    jobId: job.job_id,
+    contactId: job.contact_id,
+    deliveryId: job.deliveryId,
+    outcome: 'sent',
+    messageId: 'msg-guardada',
+  });
+  // O lote precisa estar encerrado para poder ser limpo do painel.
+  database.finishCampaignIfDone(run.id);
+
+  assert.equal((await send(baseUrl, 'DELETE', `/api/queue/${run.id}`)).status, 200);
+
+  assert.equal(database.getQueueView().status, 'idle');
+  assert.equal(database.getContact(1).status, 'sent', 'quem recebeu continua marcado como enviado');
+  const historico = database.listDeliveries(1);
+  assert.equal(historico.length, 1, 'a entrega continua registrada');
+  assert.equal(historico[0].message, 'mensagem enviada');
+});

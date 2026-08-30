@@ -130,6 +130,7 @@
               <button class="button button-secondary hidden" id="pause-queue" type="button">Pausar</button>
               <button class="button button-primary hidden" id="resume-queue" type="button">Retomar</button>
               <button class="button button-ghost hidden" id="cancel-queue" type="button">Cancelar lote</button>
+              <button class="button button-ghost hidden" id="clear-queue" type="button">Limpar lote</button>
             </div>
           </section>
 
@@ -140,6 +141,7 @@
                 <h2>Empresas</h2>
               </div>
               <div class="list-actions">
+                <button class="button button-primary button-compact" id="import-list" type="button">Importar lista</button>
                 <button class="button button-secondary button-compact" id="show-imports" type="button">Importações</button>
                 <button class="button button-ghost button-compact" id="delete-filtered" type="button">Apagar filtrados</button>
                 <a class="button button-secondary button-compact" id="export-csv" href="/api/export.csv" download>Exportar CSV</a>
@@ -302,6 +304,7 @@
       </form>
     </dialog>
 
+    <input id="import-file" type="file" accept=".json,.csv,.txt,text/plain,text/csv,application/json" hidden>
     <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
   </body>
 </html>

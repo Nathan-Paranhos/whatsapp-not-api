@@ -13,6 +13,7 @@ const state = {
   currentAction: null,
   batchPreview: null,
   managedContact: null,
+  importDraft: null,
 };
 
 const elements = {};
@@ -35,11 +36,11 @@ function cacheElements() {
     'stat-eligible', 'stat-review', 'stat-sent', 'stat-replies', 'queue-title', 'queue-status-badge',
     'queue-empty', 'queue-live', 'queue-progress-label', 'queue-next-time', 'queue-progress-track', 'queue-progress-bar',
     'queue-current', 'queue-counts', 'queue-alert', 'queue-empty-copy', 'start-queue', 'pause-queue', 'resume-queue',
-    'cancel-queue', 'contact-search', 'contact-filter', 'city-filter', 'contacts-body',
+    'cancel-queue', 'clear-queue', 'contact-search', 'contact-filter', 'city-filter', 'contacts-body',
     'pagination-label', 'page-label', 'previous-page', 'next-page', 'message-template', 'template-count',
     'message-preview', 'save-template', 'activity-list', 'qr-modal', 'qr-frame', 'action-modal',
     'action-form', 'action-modal-icon', 'action-modal-title', 'action-modal-copy', 'action-modal-content',
-    'action-close', 'action-cancel', 'action-confirm', 'toast-region', 'policy-details', 'delete-filtered', 'tag-filter', 'show-imports', 'export-csv',
+    'action-close', 'action-cancel', 'action-confirm', 'toast-region', 'policy-details', 'delete-filtered', 'tag-filter', 'show-imports', 'export-csv', 'import-list', 'import-file',
   ];
   for (const id of ids) elements[toCamel(id)] = document.getElementById(id);
 }
@@ -51,6 +52,7 @@ function bindEvents() {
   elements.pauseQueue.addEventListener('click', () => queueAction('/api/queue/pause', 'Fila pausada.'));
   elements.resumeQueue.addEventListener('click', () => queueAction('/api/queue/resume', 'Fila retomada.'));
   elements.cancelQueue.addEventListener('click', openCancelQueueModal);
+  elements.clearQueue.addEventListener('click', openClearQueueModal);
   elements.saveTemplate.addEventListener('click', saveTemplate);
   elements.messageTemplate.addEventListener('input', () => {
     state.templateDirty = true;
@@ -81,6 +83,8 @@ function bindEvents() {
   elements.policyDetails.addEventListener('click', openPolicyModal);
   elements.deleteFiltered.addEventListener('click', openDeleteFilteredModal);
   elements.showImports.addEventListener('click', openImportsModal);
+  elements.importList.addEventListener('click', openImportModal);
+  elements.importFile.addEventListener('change', handleImportFile);
   elements.tagFilter.addEventListener('change', () => {
     state.tag = elements.tagFilter.value;
     state.page = 1;
@@ -92,10 +96,12 @@ function bindEvents() {
   elements.actionModalContent.addEventListener('click', handleRecipientAction);
   elements.actionModalContent.addEventListener('click', handleManageAction);
   elements.actionModalContent.addEventListener('click', handleImportAction);
+  elements.actionModalContent.addEventListener('click', handleImportPick);
   elements.actionModal.addEventListener('close', () => {
     state.currentAction = null;
     state.batchPreview = null;
     state.managedContact = null;
+    state.importDraft = null;
     elements.actionModalContent.replaceChildren();
   });
   window.addEventListener('beforeunload', (event) => {
@@ -273,6 +279,8 @@ function renderQueue(queue) {
   elements.pauseQueue.classList.toggle('hidden', queue.status !== 'running');
   elements.resumeQueue.classList.toggle('hidden', queue.status !== 'paused');
   elements.cancelQueue.classList.toggle('hidden', !active);
+  // Lote encerrado continua à vista até ser limpo; aí a fila volta ao início.
+  elements.clearQueue.classList.toggle('hidden', active || !hasRun);
   updateCountdown();
 }
 
@@ -671,9 +679,36 @@ function openCancelQueueModal() {
     copy: 'Itens ainda pendentes voltarão para a lista. Uma mensagem que já estiver sendo enviada pode ser concluída.',
     confirmText: 'Cancelar lote',
     danger: true,
+    content: `<div class="check-row">
+      <input id="cancel-and-clear" type="checkbox" checked>
+      <label for="cancel-and-clear">Limpar o lote do painel depois de cancelar, voltando ao estado inicial. O que já foi enviado continua registrado no histórico.</label>
+    </div>`,
     onConfirm: async () => {
+      const limpar = document.getElementById('cancel-and-clear').checked;
+      const runId = state.bootstrap?.queue.runId;
+
       await api('/api/queue/cancel', { method: 'POST' });
-      toast('Lote cancelado.', 'warning');
+      if (limpar && runId) await api(`/api/queue/${runId}`, { method: 'DELETE' });
+
+      toast(limpar ? 'Lote cancelado e removido do painel.' : 'Lote cancelado.', 'warning');
+      scheduleRefresh();
+    },
+  });
+}
+
+// Um lote encerrado fica visível no painel até ser limpo de propósito.
+function openClearQueueModal() {
+  const queue = state.bootstrap?.queue;
+  if (!queue?.runId) return toast('Não há lote para limpar.', 'warning');
+
+  openActionModal({
+    title: 'Limpar o lote do painel?',
+    copy: `A fila volta ao estado inicial. As ${formatNumber(queue.sent)} mensagem(ns) já enviada(s) continuam registradas no histórico de cada contato.`,
+    confirmText: 'Limpar',
+    danger: true,
+    onConfirm: async () => {
+      await api(`/api/queue/${queue.runId}`, { method: 'DELETE' });
+      toast('Lote removido do painel.', 'warning');
       scheduleRefresh();
     },
   });
@@ -998,6 +1033,113 @@ function openDeleteFilteredModal() {
  * as importações registradas como lote — a lista inicial e o que veio antes
  * disso não pertencem a lote nenhum e continuam intocados.
  */
+/**
+ * Importa uma lista sem terminal. Primeiro analisa e mostra o que encontrou —
+ * formato, contagens, avisos e uma amostra —, e só grava depois da confirmação.
+ */
+function openImportModal(conteudoInicial = '', nomeArquivo = '') {
+  state.importDraft = { content: conteudoInicial, filename: nomeArquivo };
+
+  openActionModal({
+    title: 'Importar lista',
+    copy: 'Cole a lista ou escolha um arquivo. JSON, CSV e texto são reconhecidos sozinhos.',
+    confirmText: 'Analisar',
+    content: `<div class="import-drop">
+      <button class="button button-secondary button-compact" type="button" data-import-pick>Escolher arquivo…</button>
+      <span id="import-filename">${nomeArquivo ? escapeHtml(nomeArquivo) : 'nenhum arquivo escolhido'}</span>
+    </div>
+    <div class="modal-field">
+      <label for="import-content">Conteúdo</label>
+      <textarea id="import-content" rows="7" placeholder="Padaria Aurora — (71) 99111-1111&#10;Café Bom Dia, 71992222222&#10;71993333333">${escapeHtml(conteudoInicial)}</textarea>
+    </div>
+    <div class="modal-field">
+      <label for="import-city">Cidade padrão (opcional)</label>
+      <input id="import-city" type="text" maxlength="80" placeholder="Preenche apenas as linhas sem cidade">
+    </div>
+    <div id="import-result"></div>`,
+    onConfirm: async () => {
+      const conteudo = document.getElementById('import-content').value;
+      if (!conteudo.trim()) throw new Error('Cole o conteúdo ou escolha um arquivo.');
+
+      state.importDraft = {
+        content: conteudo,
+        filename: state.importDraft?.filename || '',
+        defaultCity: document.getElementById('import-city').value.trim(),
+      };
+      const analise = await api('/api/imports/upload', { method: 'POST', body: state.importDraft });
+      openImportPreviewModal(analise);
+      return { keepOpen: true };
+    },
+  });
+}
+
+function openImportPreviewModal(analise) {
+  const { summary } = analise;
+  const semNome = summary.unnamed > 0;
+
+  openActionModal({
+    title: 'Confira antes de importar',
+    copy: `Formato reconhecido: ${analise.format}. Nada foi gravado ainda.`,
+    confirmText: `Importar ${formatNumber(summary.valid)} contato(s)`,
+    content: `<div class="modal-summary">
+      <div><span>Com telefone</span><strong>${formatNumber(summary.valid)}</strong></div>
+      <div><span>Sem telefone</span><strong>${formatNumber(summary.invalid)}</strong></div>
+      <div><span>Com nome</span><strong>${formatNumber(summary.named)}</strong></div>
+      <div><span>Só com o número</span><strong>${formatNumber(summary.unnamed)}</strong></div>
+    </div>
+    <p class="modal-note">${formatNumber(summary.mobile)} celular(es) e ${formatNumber(summary.landline)} fixo(s). ${formatNumber(summary.needsReview)} vão precisar de revisão manual.</p>
+    ${analise.sample.length ? `<details class="history" open>
+      <summary>Amostra das primeiras linhas</summary>
+      <ol class="history-list">
+        ${analise.sample.map((item) => `<li>
+          <strong>${escapeHtml(item.company || '(sem nome)')}</strong>
+          <span>${escapeHtml([item.phoneRaw, item.city, item.phoneKind].filter(Boolean).join(' · '))}</span>
+        </li>`).join('')}
+      </ol>
+    </details>` : ''}
+    ${analise.warningsTotal ? `<details class="history">
+      <summary>${formatNumber(analise.warningsTotal)} aviso(s)</summary>
+      <ol class="history-list">
+        ${analise.warnings.map((aviso) => `<li><span>${escapeHtml(aviso)}</span></li>`).join('')}
+      </ol>
+    </details>` : ''}
+    ${semNome ? `<div class="check-row">
+      <input id="import-allow-unnamed" type="checkbox">
+      <label for="import-allow-unnamed">${formatNumber(summary.unnamed)} contato(s) vieram só com o número. Confirmo que quero importar assim — a mensagem não poderá usar a variável {empresa} para eles.</label>
+    </div>` : ''}
+    <p class="modal-note">Ninguém entra na fila só por ser importado: o opt-in continua sendo registrado contato a contato.</p>`,
+    onConfirm: async () => {
+      if (semNome && !document.getElementById('import-allow-unnamed').checked) {
+        throw new Error('Confirme que aceita importar os contatos sem nome.');
+      }
+      const resposta = await api('/api/imports/upload', {
+        method: 'POST',
+        body: { ...state.importDraft, allowUnnamed: true, confirmed: true },
+      });
+      toast(`${formatNumber(resposta.result.inserted)} contato(s) importados. ${formatNumber(resposta.result.duplicated)} já existiam.`);
+      state.page = 1;
+      scheduleRefresh(100);
+    },
+  });
+}
+
+async function handleImportFile(event) {
+  const arquivo = event.target.files?.[0];
+  if (!arquivo) return;
+  event.target.value = '';
+
+  if (arquivo.size > 10 * 1024 * 1024) {
+    return toast('Arquivo grande demais (limite de 10 MB).', 'error');
+  }
+  try {
+    const conteudo = await arquivo.text();
+    openImportModal(conteudo, arquivo.name);
+    toast(`${arquivo.name} carregado. Confira e analise.`);
+  } catch (error) {
+    toast(`Não foi possível ler o arquivo: ${error.message}`, 'error');
+  }
+}
+
 async function openImportsModal() {
   let batches = [];
   try {
@@ -1026,6 +1168,10 @@ async function openImportsModal() {
     content: `<ul class="import-list">${linhas}</ul>`,
     onConfirm: async () => {},
   });
+}
+
+function handleImportPick(event) {
+  if (event.target.closest('[data-import-pick]')) elements.importFile.click();
 }
 
 async function handleImportAction(event) {

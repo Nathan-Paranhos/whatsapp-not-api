@@ -351,6 +351,17 @@ textarea { width: 100%; resize: vertical; border: 1px solid var(--line); border-
 .uncertain-box p { margin: 4px 0 0; color: var(--ink-soft); font-size: 11px; line-height: 1.5; }
 .uncertain-box .manage-actions { margin-top: 10px; padding-top: 10px; border-color: #eadcc0; }
 
+.import-drop {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin-top: 20px;
+  padding: 13px;
+  border: 1px dashed #d6ddd8;
+  border-radius: 12px;
+  background: var(--surface-soft);
+}
+.import-drop span { color: var(--ink-faint); font-size: 11px; }
 .import-list { max-height: 46vh; margin: 20px 0 0; padding: 0; overflow-y: auto; list-style: none; border: 1px solid var(--line); border-radius: 12px; }
 .import-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 13px; border-bottom: 1px solid var(--line); }
 .import-list li:last-child { border-bottom: 0; }

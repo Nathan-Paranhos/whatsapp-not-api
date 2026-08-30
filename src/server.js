@@ -7,6 +7,7 @@ const { WhatsAppService } = require('./whatsapp-service');
 const { CampaignRunner } = require('./campaign-runner');
 const { RealtimeHub } = require('./realtime-hub');
 const { normalizeCompanyName, validateTemplate, renderTemplate, usesCompanyToken } = require('./lib/template');
+const { parseContactList } = require('./import/parse-contacts');
 
 const PREVIEW_COMPANY = 'Empresa Exemplo';
 const MAX_INTERVAL_SECONDS = 600;
@@ -53,6 +54,9 @@ function applyMiddleware(app, appConfig) {
   app.use(securityHeaders);
   app.use(blockForeignHosts());
   app.use(blockForeignOrigins());
+  // Uma lista de milhares de contatos passa fácil de 96kb. O limite maior vale
+  // só para a rota de importação; o resto do painel continua apertado.
+  app.use('/api/imports/upload', express.json({ limit: '12mb' }));
   app.use(express.json({ limit: '96kb' }));
 }
 
@@ -268,6 +272,50 @@ function registerContactRoutes({ app, database, runner, notify }) {
 // -------------------------------------------------------------------- mensagem
 
 function registerImportRoutes({ app, database, notify }) {
+  /**
+   * Importa uma lista colada ou enviada pelo painel, sem terminal. Sem
+   * `confirmed`, só analisa e devolve o que faria — é a prévia que a tela mostra
+   * antes de gravar qualquer coisa.
+   */
+  app.post('/api/imports/upload', (req, res) => {
+    const content = String(req.body?.content ?? '');
+    if (!content.trim()) throw apiError(400, 'EMPTY_CONTENT', 'Cole o conteúdo ou escolha um arquivo.');
+
+    const parsed = parseContactList(content, { defaultCity: String(req.body?.defaultCity || '') });
+    const resumo = {
+      ok: true,
+      format: parsed.format,
+      summary: parsed.summary,
+      warnings: parsed.warnings.slice(0, 50),
+      warningsTotal: parsed.warnings.length,
+      sample: parsed.contacts.slice(0, 5).map((contact) => ({
+        company: contact.companyDisplay,
+        phoneRaw: contact.phoneRaw,
+        city: contact.city,
+        phoneKind: contact.phoneKind,
+      })),
+    };
+
+    if (!parsed.summary.valid) {
+      throw apiError(400, 'NOTHING_TO_IMPORT', 'Nenhum contato utilizável foi encontrado no conteúdo enviado.');
+    }
+    // Nome por contato é o que permite usar {empresa}. Quem não tem precisa
+    // dizer de propósito que aceita seguir só com os números.
+    if (parsed.summary.unnamed && req.body?.allowUnnamed !== true) {
+      return res.status(200).json({ ...resumo, needsUnnamedConfirmation: true, imported: false });
+    }
+    if (req.body?.confirmed !== true) {
+      return res.status(200).json({ ...resumo, imported: false });
+    }
+
+    const result = database.importContacts(parsed.contacts, {
+      source: String(req.body?.filename || 'colado no painel').slice(0, 120),
+      format: parsed.format,
+    });
+    notify('contacts');
+    return res.json({ ...resumo, imported: true, result, summaryTotals: database.getSummary() });
+  });
+
   app.get('/api/imports', (req, res) => {
     res.json({ ok: true, batches: database.listImportBatches() });
   });
@@ -342,6 +390,14 @@ function registerQueueRoutes({ app, appConfig, database, runner, notify }) {
     const queue = runner.resume();
     notify('queue');
     res.json({ ok: true, queue });
+  });
+
+  // Remove um lote encerrado do painel, devolvendo a fila ao estado inicial.
+  app.delete('/api/queue/:runId', (req, res) => {
+    const result = database.discardRun(req.params.runId);
+    if (!result) throw apiError(404, 'NOT_FOUND', 'Lote não encontrado.');
+    notify('queue');
+    res.json({ ok: true, ...result, queue: database.getQueueView() });
   });
 
   app.post('/api/queue/cancel', (req, res) => {

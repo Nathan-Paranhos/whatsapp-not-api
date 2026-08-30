@@ -1147,6 +1147,33 @@ class AppDatabase {
     return true;
   }
 
+  /**
+   * Remove um lote encerrado do painel, devolvendo a fila ao estado inicial.
+   * O que já foi enviado continua enviado: apaga apenas o lote e seus itens de
+   * fila. As entregas ficam — elas são o registro do que a pessoa recebeu, e
+   * apagar isso perderia a prova do envio.
+   */
+  discardRun(runId) {
+    const run = this.getRun(runId);
+    if (!run) return null;
+    if (run.status === 'running') {
+      const error = new Error('Pause ou cancele o lote antes de removê-lo do painel.');
+      error.code = 'CAMPAIGN_ACTIVE';
+      throw error;
+    }
+
+    this.transaction(() => {
+      this.db.prepare('DELETE FROM queue_jobs WHERE run_id = ?').run(runId);
+      this.db.prepare('DELETE FROM campaign_runs WHERE id = ?').run(runId);
+      this.recordEvent({
+        type: 'campaign.discarded',
+        title: 'Lote removido do painel',
+        detail: { runId, status: run.status, sent: Number(run.sent) },
+      });
+    });
+    return { runId, sent: Number(run.sent), total: Number(run.total) };
+  }
+
   pauseCampaign(runId, reason) {
     const now = new Date().toISOString();
     this.db.prepare(`
