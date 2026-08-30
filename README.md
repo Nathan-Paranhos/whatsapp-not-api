@@ -74,8 +74,6 @@ Se o seu uso é comercial e recorrente, o caminho correto é a [WhatsApp Busines
   <img src="docs/painel.png" alt="Painel do whatsapp-not-api: cartões de resumo, fila de envio com o mascote e a lista de empresas" width="900">
 </p>
 
-Tudo em uma tela: o resumo da lista, a fila, a conexão do WhatsApp e a mensagem em uso. Os prints deste README são gerados por `npm run screenshots`, sempre contra a lista fictícia de teste.
-
 ---
 
 ## O que ele faz e o que ele não faz
