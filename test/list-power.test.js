@@ -374,3 +374,81 @@ test('limpar o lote não apaga o histórico do que já foi enviado', async (t) =
   assert.equal(historico.length, 1, 'a entrega continua registrada');
   assert.equal(historico[0].message, 'mensagem enviada');
 });
+
+// ------------------------------------------------ variáveis personalizadas
+
+test('adiciona, usa e remove variável personalizada pela API', async (t) => {
+  const { baseUrl, database } = await createServer(t);
+
+  const inicial = await (await fetch(`${baseUrl}/api/variables`)).json();
+  assert.deepEqual(inicial.contact.map((item) => item.name), ['empresa', 'cidade', 'telefone']);
+  assert.deepEqual(inicial.custom, []);
+
+  const salvou = await send(baseUrl, 'PUT', '/api/variables', {
+    variables: [{ name: 'Meu Nome', value: 'Nathan' }, { name: 'link', value: 'exemplo.com' }],
+  });
+  assert.equal(salvou.status, 200);
+  assert.deepEqual((await salvou.json()).custom, [
+    { name: 'meunome', value: 'Nathan' },
+    { name: 'link', value: 'exemplo.com' },
+  ]);
+
+  // agora a mensagem pode citá-las
+  const template = 'Oi {empresa} de {cidade}, aqui é {meunome}. {link}';
+  assert.equal((await send(baseUrl, 'PUT', '/api/template', { template })).status, 200);
+
+  const removida = await send(baseUrl, 'PUT', '/api/variables', { variables: [{ name: 'link', value: 'exemplo.com' }] });
+  assert.equal(removida.status, 409, 'não remove variável que a mensagem usa');
+  assert.equal((await removida.json()).code, 'TEMPLATE_USES_VARIABLE');
+  assert.equal(database.getCustomVariables().length, 2);
+
+  await send(baseUrl, 'PUT', '/api/template', { template: 'Oi {empresa}!' });
+  assert.equal((await send(baseUrl, 'PUT', '/api/variables', { variables: [] })).status, 200);
+  assert.deepEqual(database.getCustomVariables(), []);
+});
+
+test('variável inválida é recusada com a razão', async (t) => {
+  const { baseUrl } = await createServer(t);
+
+  const colide = await send(baseUrl, 'PUT', '/api/variables', { variables: [{ name: 'empresa', value: 'x' }] });
+  assert.equal(colide.status, 400);
+  assert.match((await colide.json()).error, /já é uma variável do contato/);
+
+  const comChave = await send(baseUrl, 'PUT', '/api/variables', { variables: [{ name: 'ok', value: '{x}' }] });
+  assert.equal(comChave.status, 400);
+
+  const formato = await send(baseUrl, 'PUT', '/api/variables', { variables: 'não é lista' });
+  assert.equal(formato.status, 400);
+  assert.equal((await formato.json()).code, 'INVALID_VARIABLES');
+});
+
+test('a mensagem enviada usa as variáveis do contato e as personalizadas', async (t) => {
+  const { baseUrl, database } = await createServer(t);
+  await send(baseUrl, 'PUT', '/api/variables', { variables: [{ name: 'meunome', value: 'Nathan' }] });
+  database.setSetting('message_template', 'Oi {empresa} de {cidade}, aqui é {meunome}.');
+  database.confirmConsent(1, 'teste');
+
+  const previa = await (await fetch(`${baseUrl}/api/queue/preview?limit=1`)).json();
+  assert.equal(previa.contacts[0].message, 'Oi Padaria Aurora de Salvador, aqui é Nathan.');
+});
+
+test('lote é barrado quando a variável do contato falta em alguém', async (t) => {
+  const { baseUrl, database } = await createServer(t);
+  database.setSetting('message_template', 'Oi {empresa} de {cidade}!');
+
+  // o contato #4 do fixture não tem nome nem cidade
+  const semDados = database.listContacts({ filter: 'consent', pageSize: 100 }).items
+    .find((contact) => !contact.hasCompanyName);
+  database.confirmConsent(semDados.id, 'teste');
+
+  const response = await send(baseUrl, 'POST', '/api/queue/start', {
+    contactIds: [semDados.id],
+    intervalSeconds: 180,
+    authorizationAcknowledged: true,
+  });
+  assert.equal(response.status, 400);
+  const erro = await response.json();
+  assert.equal(erro.code, 'MISSING_COMPANY_NAMES');
+  assert.match(erro.error, /\{empresa\}/);
+  assert.match(erro.error, /\{cidade\}/);
+});

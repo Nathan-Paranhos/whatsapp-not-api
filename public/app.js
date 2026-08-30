@@ -14,6 +14,8 @@ const state = {
   batchPreview: null,
   managedContact: null,
   importDraft: null,
+  variables: null,
+  variableDraft: null,
 };
 
 const elements = {};
@@ -40,7 +42,7 @@ function cacheElements() {
     'pagination-label', 'page-label', 'previous-page', 'next-page', 'message-template', 'template-count',
     'message-preview', 'save-template', 'activity-list', 'qr-modal', 'qr-frame', 'action-modal',
     'action-form', 'action-modal-icon', 'action-modal-title', 'action-modal-copy', 'action-modal-content',
-    'action-close', 'action-cancel', 'action-confirm', 'toast-region', 'policy-details', 'delete-filtered', 'tag-filter', 'show-imports', 'export-csv', 'import-list', 'import-file',
+    'action-close', 'action-cancel', 'action-confirm', 'toast-region', 'policy-details', 'delete-filtered', 'tag-filter', 'show-imports', 'export-csv', 'import-list', 'import-file', 'manage-variables', 'variable-chips',
   ];
   for (const id of ids) elements[toCamel(id)] = document.getElementById(id);
 }
@@ -85,6 +87,8 @@ function bindEvents() {
   elements.showImports.addEventListener('click', openImportsModal);
   elements.importList.addEventListener('click', openImportModal);
   elements.importFile.addEventListener('change', handleImportFile);
+  elements.manageVariables.addEventListener('click', openVariablesModal);
+  elements.variableChips.addEventListener('click', handleVariableInsert);
   elements.tagFilter.addEventListener('change', () => {
     state.tag = elements.tagFilter.value;
     state.page = 1;
@@ -97,11 +101,13 @@ function bindEvents() {
   elements.actionModalContent.addEventListener('click', handleManageAction);
   elements.actionModalContent.addEventListener('click', handleImportAction);
   elements.actionModalContent.addEventListener('click', handleImportPick);
+  elements.actionModalContent.addEventListener('click', handleVariableRowAction);
   elements.actionModal.addEventListener('close', () => {
     state.currentAction = null;
     state.batchPreview = null;
     state.managedContact = null;
     state.importDraft = null;
+    state.variableDraft = null;
     elements.actionModalContent.replaceChildren();
   });
   window.addEventListener('beforeunload', (event) => {
@@ -153,6 +159,7 @@ function renderBootstrap({ initial = false } = {}) {
   renderEvents(data.events);
   renderCities(data.cities);
   renderTags(data.tags);
+  renderVariables(data.variables);
   elements.policyDetails.disabled = false;
 
   if (!state.templateDirty) {
@@ -408,12 +415,140 @@ function updateExportLink() {
   elements.exportCsv.textContent = query ? 'Exportar filtrados' : 'Exportar CSV';
 }
 
+/**
+ * Mostra as variáveis disponíveis como fichas clicáveis. As do contato mudam
+ * por destinatário; as personalizadas têm valor fixo, definido uma vez.
+ */
+function renderVariables(variables) {
+  if (!variables) return;
+  state.variables = variables;
+
+  const ficha = (name, titulo, className) =>
+    `<button class="variable-chip ${className}" type="button" data-variable="${escapeHtml(name)}" title="${escapeHtml(titulo)}">{${escapeHtml(name)}}</button>`;
+
+  const doContato = variables.contact.map((item) => ficha(item.name, item.label, 'contact'));
+  const personalizadas = variables.custom.map((item) =>
+    ficha(item.name, `Valor fixo: ${item.value || '(vazio)'}`, 'custom'));
+
+  elements.variableChips.innerHTML = [...doContato, ...personalizadas].join('')
+    || '<span class="variable-empty">Nenhuma variável disponível.</span>';
+}
+
+// Insere a variável onde o cursor estiver, em vez de sempre no fim.
+function handleVariableInsert(event) {
+  const botao = event.target.closest('[data-variable]');
+  if (!botao) return;
+
+  const campo = elements.messageTemplate;
+  const token = `{${botao.dataset.variable}}`;
+  const inicio = campo.selectionStart ?? campo.value.length;
+  const fim = campo.selectionEnd ?? campo.value.length;
+
+  campo.value = campo.value.slice(0, inicio) + token + campo.value.slice(fim);
+  campo.focus();
+  campo.setSelectionRange(inicio + token.length, inicio + token.length);
+
+  state.templateDirty = true;
+  updateTemplatePreview();
+  if (state.bootstrap) renderQueue(state.bootstrap.queue);
+}
+
+function openVariablesModal() {
+  const custom = state.variables?.custom || [];
+  const doContato = (state.variables?.contact || [])
+    .map((item) => `<li><code>{${escapeHtml(item.name)}}</code><span>${escapeHtml(item.label)}</span></li>`)
+    .join('');
+
+  openActionModal({
+    title: 'Variáveis da mensagem',
+    copy: 'As do contato mudam a cada destinatário. As personalizadas têm um valor fixo que você define aqui.',
+    confirmText: 'Salvar variáveis',
+    content: `<ul class="variable-list readonly">${doContato}</ul>
+      <div class="variables-head spaced">
+        <span>Personalizadas</span>
+        <button class="text-button" type="button" data-variable-add>Adicionar</button>
+      </div>
+      <ul class="variable-list" id="variable-rows"></ul>
+      <p class="modal-note">O nome vira minúsculo e sem acento. Remover uma variável usada na mensagem é recusado — ajuste o texto antes.</p>`,
+    onConfirm: async () => {
+      // A lista vazia mostra uma linha de aviso, sem campos: ela não é variável.
+      const variables = [...document.querySelectorAll('#variable-rows li')]
+        .map((linha) => ({
+          name: linha.querySelector('[data-variable-name]')?.value ?? '',
+          value: linha.querySelector('[data-variable-value]')?.value ?? '',
+        }))
+        .filter((item) => item.name.trim() || item.value.trim());
+
+      const resposta = await api('/api/variables', { method: 'PUT', body: { variables } });
+      toast(`${resposta.custom.length} variável(is) salva(s).`);
+      scheduleRefresh();
+    },
+  });
+
+  state.variableDraft = custom.map((item) => ({ ...item }));
+  renderVariableRows();
+}
+
+function renderVariableRows() {
+  const lista = document.getElementById('variable-rows');
+  if (!lista) return;
+  const linhas = state.variableDraft || [];
+
+  lista.innerHTML = linhas.length
+    ? linhas.map((item, indice) => `<li>
+        <input data-variable-name type="text" maxlength="24" value="${escapeHtml(item.name)}" placeholder="meunome" aria-label="Nome da variável">
+        <input data-variable-value type="text" maxlength="500" value="${escapeHtml(item.value)}" placeholder="Valor fixo" aria-label="Valor da variável">
+        <button class="mini-button danger" type="button" data-variable-remove="${indice}">Remover</button>
+      </li>`).join('')
+    : '<li class="variable-empty">Nenhuma variável personalizada ainda.</li>';
+}
+
+function handleVariableRowAction(event) {
+  if (!state.variableDraft) return;
+
+  if (event.target.closest('[data-variable-add]')) {
+    guardarRascunhoDeVariaveis();
+    state.variableDraft.push({ name: '', value: '' });
+    renderVariableRows();
+    document.querySelector('#variable-rows li:last-child [data-variable-name]')?.focus();
+    return;
+  }
+
+  const remover = event.target.closest('[data-variable-remove]');
+  if (remover) {
+    guardarRascunhoDeVariaveis();
+    state.variableDraft.splice(Number(remover.dataset.variableRemove), 1);
+    renderVariableRows();
+  }
+}
+
+// O rascunho vive no estado: sem isso, redesenhar a lista apagaria o que foi
+// digitado nas outras linhas.
+function guardarRascunhoDeVariaveis() {
+  const linhas = [...document.querySelectorAll('#variable-rows li')];
+  if (!linhas.length) return;
+  state.variableDraft = linhas.map((linha) => ({
+    name: linha.querySelector('[data-variable-name]')?.value ?? '',
+    value: linha.querySelector('[data-variable-value]')?.value ?? '',
+  }));
+}
+
+// Prévia local com valores de exemplo. O servidor devolve a versão oficial ao
+// salvar; esta serve para o texto não ficar cru enquanto se digita.
+function previewComVariaveis(template) {
+  const exemplo = { empresa: 'Empresa Exemplo', cidade: 'Salvador', telefone: '(71) 99999-9999' };
+  for (const item of state.variables?.custom || []) exemplo[item.name] = item.value;
+
+  return String(template).replace(/\{([^{}]+)\}/g, (token, nome) =>
+    (nome in exemplo ? exemplo[nome] : token));
+}
+
 function updateTemplatePreview() {
   const template = elements.messageTemplate.value;
   elements.templateCount.textContent = `${template.length} / 4096`;
   elements.templateCount.style.color = template.length > 4096 ? 'var(--red)' : '';
-  elements.messagePreview.textContent = template.split('{empresa}').join('Empresa Exemplo');
-  elements.saveTemplate.disabled = !state.templateDirty || !template.includes('{empresa}') || template.length > 4096;
+  elements.messagePreview.textContent = previewComVariaveis(template);
+  elements.saveTemplate.disabled = !state.templateDirty || template.length > 4096;
 }
 
 async function saveTemplate() {

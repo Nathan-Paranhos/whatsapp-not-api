@@ -1,5 +1,8 @@
 const EventEmitter = require('node:events');
-const { renderTemplate, validateTemplate, hashMessage, usesCompanyToken } = require('./lib/template');
+const {
+  renderTemplate, validateTemplate, hashMessage,
+  variablesForContact, missingVariablesFor, contactVariablesUsed,
+} = require('./lib/template');
 const { isEligibleContact } = require('./database');
 
 const MAX_CONSECUTIVE_PROBLEMS = 3;
@@ -157,7 +160,10 @@ class CampaignRunner extends EventEmitter {
   }
 
   requireValidTemplate() {
-    const validation = validateTemplate(this.database.getSetting('message_template'));
+    const validation = validateTemplate(
+      this.database.getSetting('message_template'),
+      this.database.getCustomVariables(),
+    );
     if (!validation.valid) throw appError('INVALID_TEMPLATE', validation.errors.join(' '));
     return validation.value;
   }
@@ -181,14 +187,22 @@ class CampaignRunner extends EventEmitter {
    * só de números precisa saber disso antes de disparar, não depois.
    */
   assertNamesCoverTemplate(contacts, template) {
-    if (!usesCompanyToken(template)) return;
-    const unnamed = contacts.filter((contact) => !contact.company_display).length;
-    if (unnamed > 0) {
-      throw appError(
-        'MISSING_COMPANY_NAMES',
-        `${unnamed} contato(s) desta seleção estão sem nome de empresa. Preencha o nome deles ou tire a variável {empresa} da mensagem.`,
-      );
+    if (!contactVariablesUsed(template).length) return;
+
+    const custom = this.database.getCustomVariables();
+    const faltando = new Map();
+    for (const contact of contacts) {
+      for (const nome of missingVariablesFor(template, contact, custom)) {
+        faltando.set(nome, (faltando.get(nome) || 0) + 1);
+      }
     }
+    if (!faltando.size) return;
+
+    const detalhe = [...faltando].map(([nome, quantos]) => `{${nome}} em ${quantos} contato(s)`).join(', ');
+    throw appError(
+      'MISSING_COMPANY_NAMES',
+      `A mensagem usa variáveis que alguns destinatários não têm: ${detalhe}. Preencha o dado ou tire a variável da mensagem.`,
+    );
   }
 
   // -------------------------------------------------------- ciclo de trabalho
@@ -255,7 +269,7 @@ class CampaignRunner extends EventEmitter {
   leaseJobFor(run, template) {
     return this.database.leaseNextJob(
       run.id,
-      (contact) => renderTemplate(template, contact.company_display),
+      (contact) => renderTemplate(template, variablesForContact(contact, this.database.getCustomVariables()), this.database.getCustomVariables()),
       run.template_hash,
     );
   }
@@ -267,7 +281,8 @@ class CampaignRunner extends EventEmitter {
    */
   async sendMessage(job, template) {
     try {
-      const message = renderTemplate(template, job.company_display);
+      const custom = this.database.getCustomVariables();
+      const message = renderTemplate(template, variablesForContact(job, custom), custom);
       const result = await this.whatsapp.sendText(job.whatsapp_digits, message);
       return result.registered
         ? { outcome: 'sent', messageId: result.messageId, error: null }

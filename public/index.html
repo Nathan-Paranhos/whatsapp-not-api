@@ -233,12 +233,19 @@
                 <p class="section-kicker">Mensagem fixa</p>
                 <h2>Modelo</h2>
               </div>
-              <span class="variable-chip">{empresa}</span>
+              <span class="composer-badge">variáveis</span>
             </div>
             <label class="field-label" for="message-template">Texto enviado</label>
             <textarea id="message-template" rows="14" spellcheck="true"></textarea>
+            <div class="variables-bar">
+              <div class="variables-head">
+                <span>Variáveis</span>
+                <button class="text-button" id="manage-variables" type="button">Gerenciar</button>
+              </div>
+              <div class="variable-chips" id="variable-chips"></div>
+            </div>
             <div class="composer-meta">
-              <span>Use <code>{empresa}</code> no texto</span>
+              <span>Clique numa variável para inserir</span>
               <span id="template-count">0 / 4096</span>
             </div>
             <details class="preview-disclosure">

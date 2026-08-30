@@ -324,6 +324,26 @@ class AppDatabase {
     `).run(key, JSON.stringify(value), now);
   }
 
+  // Variáveis personalizadas vivem em settings: são configuração do painel,
+  // não dado de contato.
+  getCustomVariables() {
+    const bruto = this.getSetting('custom_variables');
+    if (!Array.isArray(bruto)) return [];
+    return bruto
+      .filter((item) => item && typeof item.name === 'string')
+      .map((item) => ({ name: item.name, value: String(item.value ?? '') }));
+  }
+
+  setCustomVariables(list) {
+    this.setSetting('custom_variables', list);
+    this.recordEvent({
+      type: 'variables.updated',
+      title: `${list.length} variável(is) personalizada(s) salva(s)`,
+      detail: { names: list.map((item) => item.name) },
+    });
+    return this.getCustomVariables();
+  }
+
   getSummary() {
     const row = this.db.prepare(`
       SELECT

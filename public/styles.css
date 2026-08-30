@@ -351,6 +351,26 @@ textarea { width: 100%; resize: vertical; border: 1px solid var(--line); border-
 .uncertain-box p { margin: 4px 0 0; color: var(--ink-soft); font-size: 11px; line-height: 1.5; }
 .uncertain-box .manage-actions { margin-top: 10px; padding-top: 10px; border-color: #eadcc0; }
 
+.variables-bar { margin: 12px 0 0; }
+.variables-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.variables-head span { color: var(--ink-faint); font-size: 9px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
+.variables-head.spaced { margin-top: 18px; }
+.composer-badge { padding: 3px 8px; border-radius: 7px; color: var(--green-800); background: var(--green-100); font-size: 9px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; }
+.variable-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+.variable-chip { padding: 4px 8px; border: 1px solid var(--line); border-radius: 7px; background: #fff; font-family: Courier, monospace; font-size: 10px; font-weight: 700; }
+.variable-chip.contact { color: var(--green-800); border-color: #c9ddd1; background: var(--green-50); }
+.variable-chip.custom { color: var(--blue); border-color: #c6dcea; background: var(--blue-soft); }
+.variable-chip:hover { border-color: var(--green-700); }
+.variable-empty { color: var(--ink-faint); font-size: 10px; }
+
+.variable-list { margin: 8px 0 0; padding: 0; list-style: none; }
+.variable-list li { display: flex; align-items: center; gap: 7px; padding: 6px 0; }
+.variable-list.readonly li { gap: 10px; padding: 5px 0; border-bottom: 1px solid var(--line); }
+.variable-list.readonly code { min-width: 88px; color: var(--green-800); font-size: 11px; }
+.variable-list.readonly span { color: var(--ink-soft); font-size: 11px; }
+.variable-list input { min-width: 0; height: 34px; flex: 1; padding: 0 9px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-soft); font-size: 11px; }
+.variable-list input[data-variable-name] { max-width: 130px; font-family: Courier, monospace; }
+
 .import-drop {
   display: flex;
   align-items: center;

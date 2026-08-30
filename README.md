@@ -83,7 +83,7 @@ Tudo em uma tela: o resumo da lista, a fila, a conexão do WhatsApp e a mensagem
 | Faz | Não faz |
 | --- | --- |
 | Importa sua lista em JSON, CSV ou texto, pelo painel ou pelo terminal | Não busca nem descobre números para você |
-| Você escreve a mensagem, com ou sem `{empresa}` | Não escreve a mensagem por você |
+| Você escreve a mensagem, com variáveis do contato e personalizadas | Não escreve a mensagem por você |
 | Exige opt-in registrado contato a contato | Não tem botão de "marcar todos como autorizados" |
 | Mostra a lista de destinatários antes de enviar, com remoção individual | Não dispara nada sem essa conferência |
 | Envia uma mensagem por vez, com espera sorteada | Não envia em paralelo nem em rajada |
@@ -286,10 +286,31 @@ Use `--cidade "Salvador"` para preencher a cidade de todas as linhas que vieram 
 
 No painel, campo **Mensagem**. Máximo de 4096 caracteres.
 
-A variável `{empresa}` é **opcional** e é a única aceita — qualquer outra (`{nome}`, `{cidade}`) é recusada na hora de salvar.
+### Variáveis
 
-- **Com `{empresa}`**: é substituída pelo nome de cada contato. Se algum destinatário do lote estiver sem nome, o painel recusa o lote e diz quantos são. Você nomeia ou remove esses contatos.
-- **Sem `{empresa}`**: a mesma mensagem vai para todo mundo, e contatos só com número funcionam normalmente.
+Abaixo do texto há a barra de **Variáveis**. Clique em uma para inserir onde o cursor estiver.
+
+**Do contato** — mudam a cada destinatário, vindas da linha importada:
+
+| Variável | Vem de |
+| --- | --- |
+| `{empresa}` | Nome da empresa |
+| `{cidade}` | Cidade do contato |
+| `{telefone}` | Telefone do contato |
+
+**Personalizadas** — valor fixo, igual para todo mundo. Use **Gerenciar** para adicionar e remover: seu nome, o nome
+da sua empresa, um link, o que fizer sentido. O nome é normalizado (vira minúsculo, sem acento e sem espaço), não
+pode repetir uma variável do contato, e o valor não pode conter `{` ou `}`.
+
+Duas travas que evitam mensagem quebrada:
+
+- **Remover uma variável que a mensagem usa é recusado.** Ajuste o texto antes — senão o modelo salvo ficaria
+  inválido sem ninguém perceber.
+- **Variável do contato que falta em alguém barra o lote**, dizendo qual variável e em quantos contatos. Se a
+  mensagem usa `{cidade}` e três destinatários não têm cidade, o lote não sai: preencha o dado ou tire a variável.
+
+Toda variável é opcional. Uma mensagem sem nenhuma vai igual para todo mundo, e contatos importados só com o número
+funcionam normalmente.
 
 O painel mostra a prévia com um nome de exemplo enquanto você escreve. É preciso salvar antes de iniciar um lote.
 

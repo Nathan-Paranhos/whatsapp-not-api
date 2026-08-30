@@ -6,10 +6,28 @@ const { AppDatabase } = require('./database');
 const { WhatsAppService } = require('./whatsapp-service');
 const { CampaignRunner } = require('./campaign-runner');
 const { RealtimeHub } = require('./realtime-hub');
-const { normalizeCompanyName, validateTemplate, renderTemplate, usesCompanyToken } = require('./lib/template');
+const {
+  normalizeCompanyName, validateTemplate, renderTemplate,
+  validateCustomVariables, variablesForContact, missingVariablesFor,
+  CONTACT_VARIABLES,
+} = require('./lib/template');
 const { parseContactList } = require('./import/parse-contacts');
 
-const PREVIEW_COMPANY = 'Empresa Exemplo';
+// Contato fictício usado só para montar a prévia da mensagem no painel.
+const PREVIEW_CONTACT = {
+  company_display: 'Empresa Exemplo',
+  city: 'Salvador',
+  phone_raw: '(71) 99999-9999',
+};
+
+function previewMessage(template, customVariables) {
+  try {
+    return renderTemplate(template, variablesForContact(PREVIEW_CONTACT, customVariables), customVariables);
+  } catch {
+    // Modelo inválido não derruba o painel: a prévia some e o erro aparece ao salvar.
+    return null;
+  }
+}
 const MAX_INTERVAL_SECONDS = 600;
 
 /**
@@ -76,7 +94,11 @@ function registerBootstrapRoutes({ app, appConfig, database, whatsapp, hub }) {
       summary: database.getSummary(),
       queue: database.getQueueView(),
       template,
-      templatePreview: renderTemplate(template, PREVIEW_COMPANY),
+      templatePreview: previewMessage(template, database.getCustomVariables()),
+      variables: {
+        contact: Object.entries(CONTACT_VARIABLES).map(([name, spec]) => ({ name, label: spec.label })),
+        custom: database.getCustomVariables(),
+      },
       cities: database.getCities(),
       tags: database.listTags(),
       imports: database.listImportBatches(10),
@@ -334,11 +356,47 @@ function registerImportRoutes({ app, database, notify }) {
 }
 
 function registerTemplateRoutes({ app, database, notify }) {
+  app.get('/api/variables', (req, res) => {
+    res.json({
+      ok: true,
+      contact: Object.entries(CONTACT_VARIABLES).map(([name, spec]) => ({ name, label: spec.label })),
+      custom: database.getCustomVariables(),
+    });
+  });
+
+  /**
+   * Substitui o conjunto de variáveis personalizadas. Recusa quando a mensagem
+   * em uso passaria a citar uma variável que deixou de existir — senão o modelo
+   * salvo ficaria inválido sem ninguém perceber.
+   */
+  app.put('/api/variables', (req, res) => {
+    if (!Array.isArray(req.body?.variables)) {
+      throw apiError(400, 'INVALID_VARIABLES', 'Envie a lista de variáveis.');
+    }
+    const validation = validateCustomVariables(req.body.variables);
+    if (!validation.valid) throw apiError(400, 'INVALID_VARIABLES', validation.errors.join(' '));
+
+    const template = database.getSetting('message_template');
+    const comNovas = validateTemplate(template, validation.value);
+    if (!comNovas.valid) {
+      throw apiError(
+        409,
+        'TEMPLATE_USES_VARIABLE',
+        `A mensagem em uso ficaria inválida: ${comNovas.errors.join(' ')} Ajuste a mensagem antes de remover a variável.`,
+      );
+    }
+
+    const custom = database.setCustomVariables(validation.value);
+    notify('template');
+    res.json({ ok: true, custom, preview: previewMessage(template, custom) });
+  });
+
   app.put('/api/template', (req, res) => {
     if (database.getActiveRun()) {
       throw apiError(409, 'CAMPAIGN_ACTIVE', 'Conclua ou cancele o lote atual antes de alterar a mensagem.');
     }
-    const validation = validateTemplate(req.body?.template);
+    const custom = database.getCustomVariables();
+    const validation = validateTemplate(req.body?.template, custom);
     if (!validation.valid) throw apiError(400, 'INVALID_TEMPLATE', validation.errors.join(' '));
 
     database.setSetting('message_template', validation.value);
@@ -347,7 +405,7 @@ function registerTemplateRoutes({ app, database, notify }) {
     res.json({
       ok: true,
       template: validation.value,
-      preview: renderTemplate(validation.value, PREVIEW_COMPANY),
+      preview: previewMessage(validation.value, custom),
     });
   });
 }
@@ -364,7 +422,8 @@ function registerQueueRoutes({ app, appConfig, database, runner, notify }) {
       ok: true,
       limit,
       eligibleTotal: database.getSummary().eligible,
-      contacts: runner.preview({ limit }).map((contact) => toPreviewContact(contact, template)),
+      contacts: runner.preview({ limit })
+        .map((contact) => toPreviewContact(contact, template, database.getCustomVariables())),
     });
   });
 
@@ -418,9 +477,10 @@ function clampPreviewLimit(appConfig, rawLimit) {
  * A prévia mostra a linha assim mesmo, marcada, para a pessoa nomear ou remover
  * antes de iniciar — em vez de o painel quebrar na hora de montar a mensagem.
  */
-function toPreviewContact(contact, template) {
+function toPreviewContact(contact, template, customVariables) {
   const hasCompanyName = Boolean(contact.company_display);
-  const needsCompanyName = !hasCompanyName && usesCompanyToken(template);
+  const faltando = missingVariablesFor(template, contact, customVariables);
+  const needsCompanyName = faltando.length > 0;
   return {
     id: Number(contact.id),
     sourceIndex: Number(contact.source_index),
@@ -431,7 +491,10 @@ function toPreviewContact(contact, template) {
     phoneRaw: contact.phone_raw,
     phoneKind: contact.phone_kind,
     consentNote: contact.consent_note,
-    message: needsCompanyName ? null : renderTemplate(template, contact.company_display),
+    missingVariables: faltando,
+    message: needsCompanyName
+      ? null
+      : renderTemplate(template, variablesForContact(contact, customVariables), customVariables),
   };
 }
 
