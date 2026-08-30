@@ -2,7 +2,7 @@
   <img src="public/olhaozapai.png" alt="Olhão Zapai, o mascote do whatsapp-not-api: um robô branco e verde cercado de envelopes em órbita" width="300">
 </p>
 
-<h1 align="center">whatsapp-not-api</h1>
+<h1 align="center">Whatsapp Not Api</h1>
 
 <p align="center">
   <em>Painel local, open source, para falar com a sua lista pelo WhatsApp Web — uma mensagem por vez, com opt-in por contato.</em>
